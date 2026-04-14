@@ -25,6 +25,9 @@ AIDER_EDITOR_MODEL="${AIDER_EDITOR_MODEL:-}"
 AIDER_ARCHITECT="${AIDER_ARCHITECT:-0}"
 AIDER_TRACE="${AIDER_TRACE:-true}"
 AIDER_TRACE_DIR="${AIDER_TRACE_DIR:-$HOME/.local/state/rabin}"
+OLLAMA_API_BASE="${OLLAMA_API_BASE:-http://127.0.0.1:11434}"
+GIT_COMMIT_NAME="${GIT_COMMIT_NAME:-Rabin Pipeline Bot}"
+GIT_COMMIT_EMAIL="${GIT_COMMIT_EMAIL:-rabin-pipeline-bot@users.noreply.github.com}"
 TARGET_BRANCH="${TARGET_BRANCH:-}"
 PIPELINE_BRANCH_MODE="${PIPELINE_BRANCH_MODE:-issue-branch}"
 SKIP_PR_CREATE="${SKIP_PR_CREATE:-auto}"
@@ -155,6 +158,16 @@ prepare_repo() {
         git checkout -b "$BRANCH" 2>/dev/null || git checkout "$BRANCH"
         log "Branch mode: issue-branch (working branch $BRANCH from $BASE_BRANCH)"
     fi
+
+    if [ -z "$(git config user.name || true)" ]; then
+        git config user.name "$GIT_COMMIT_NAME"
+        log "Configured git user.name for this repo: $GIT_COMMIT_NAME"
+    fi
+
+    if [ -z "$(git config user.email || true)" ]; then
+        git config user.email "$GIT_COMMIT_EMAIL"
+        log "Configured git user.email for this repo: $GIT_COMMIT_EMAIL"
+    fi
 }
 
 generate_plan() {
@@ -234,6 +247,9 @@ run_aider() {
     local aider_log_file=""
     local aider_prompt_file=""
 
+    # Ensure LiteLLM/aider calls the local Ollama daemon by default.
+    export OLLAMA_API_BASE
+
     if is_truthy "$AIDER_TRACE"; then
         mkdir -p "$AIDER_TRACE_DIR"
         local trace_stamp
@@ -250,6 +266,7 @@ run_aider() {
         attempt=$((attempt + 1))
         log "Aider attempt $attempt of $MAX_RETRIES..."
         log "Aider model: $AIDER_MODEL"
+        log "Ollama API base: $OLLAMA_API_BASE"
 
         AIDER_ARGS=(
             --yes

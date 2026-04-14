@@ -87,6 +87,9 @@ Use [.env.example](.env.example) only if you want to pre-seed defaults. In norma
 - `AIDER_ARCHITECT` — set `1` to enable Aider architect mode
 - `AIDER_TRACE` — `true` by default; stores per-run prompt and streamed output logs
 - `AIDER_TRACE_DIR` — directory for Aider trace files (default `$HOME/.local/state/rabin`)
+- `OLLAMA_API_BASE` — defaults to `http://127.0.0.1:11434` for local Ollama access
+- `GIT_COMMIT_NAME` — git author name used by pipeline when repo identity is unset
+- `GIT_COMMIT_EMAIL` — git author email used by pipeline when repo identity is unset
 - Installer links `aider` to `~/.local/bin/aider` for direct shell use
 - `TARGET_BRANCH` — optional base branch to work against
 - `PIPELINE_BRANCH_MODE` — `issue-branch` (default) or `direct-target`
