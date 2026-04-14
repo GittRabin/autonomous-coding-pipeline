@@ -54,7 +54,7 @@ The VM only makes outbound requests to GitHub and model providers.
 ## Requirements
 
 - Ubuntu or another Linux machine with systemd
-- Node.js 18+
+- Node.js latest LTS (installer configures this automatically)
 - Python 3 with venv support
 - GitHub CLI installed and authenticated (`gh auth login`)
 - Ollama installed locally or installable by the install script

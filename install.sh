@@ -44,7 +44,20 @@ sudo apt-get update -qq
 sudo apt-get install -y -qq \
     curl wget git jq tmux \
     python3 python3-pip python3-venv \
-    build-essential libssl-dev nodejs npm
+    build-essential libssl-dev
+
+ensure_node_lts() {
+    log "Installing/updating Node.js to latest LTS..."
+    curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+    sudo apt-get install -y -qq nodejs
+
+    local major
+    major="$(node -v | sed -E 's/^v([0-9]+).*/\1/')"
+    [ "$major" -ge 18 ] || fail "Node.js >=18 is required, found $(node -v)"
+    log "Node.js ready (LTS channel): $(node -v), npm: $(npm -v)"
+}
+
+ensure_node_lts
 
 if ! command -v gh &>/dev/null; then
     log "Installing GitHub CLI..."
