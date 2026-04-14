@@ -49,7 +49,19 @@ sudo apt-get install -y -qq \
 ensure_node_lts() {
     log "Installing/updating Node.js to latest LTS..."
     curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
-    sudo apt-get install -y -qq nodejs
+
+    # Ubuntu's libnode-dev from old distro Node can conflict with NodeSource packages.
+    if dpkg -s libnode-dev >/dev/null 2>&1; then
+        warn "Removing conflicting distro package: libnode-dev"
+        sudo apt-get remove -y -qq libnode-dev nodejs-doc || true
+    fi
+
+    if ! sudo apt-get install -y -qq nodejs; then
+        warn "Node.js install failed, attempting dpkg recovery..."
+        sudo dpkg --configure -a || true
+        sudo apt-get -f install -y -qq || true
+        sudo apt-get install -y -qq nodejs
+    fi
 
     local major
     major="$(node -v | sed -E 's/^v([0-9]+).*/\1/')"
