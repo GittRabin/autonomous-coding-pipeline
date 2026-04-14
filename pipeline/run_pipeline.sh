@@ -20,10 +20,14 @@ PLAN_MODEL_PROVIDER="${PLAN_MODEL_PROVIDER:-auto}"
 AIDER_MODEL="${AIDER_MODEL:-ollama/$OLLAMA_MODEL}"
 AIDER_EDITOR_MODEL="${AIDER_EDITOR_MODEL:-}"
 AIDER_ARCHITECT="${AIDER_ARCHITECT:-0}"
+TARGET_BRANCH="${TARGET_BRANCH:-}"
+PIPELINE_BRANCH_MODE="${PIPELINE_BRANCH_MODE:-issue-branch}"
+SKIP_PR_CREATE="${SKIP_PR_CREATE:-auto}"
 VENV_DIR="${VENV_DIR:-$HOME/.venv/pipeline}"
 E2E_RUNNER_CMD="${E2E_RUNNER_CMD:-}"
 MAX_RETRIES=3
 DEFAULT_BRANCH="main"
+BASE_BRANCH=""
 
 log()  { echo "[pipeline #$ISSUE_NUMBER] $(date '+%H:%M:%S') $1"; }
 fail() { echo "[pipeline #$ISSUE_NUMBER] $(date '+%H:%M:%S') FAILED: $1"; exit 1; }
@@ -33,6 +37,9 @@ fail() { echo "[pipeline #$ISSUE_NUMBER] $(date '+%H:%M:%S') FAILED: $1"; exit 1
 BRANCH="task/issue-${ISSUE_NUMBER}"
 REPO_SLUG="${GITHUB_REPO//\//_}"
 REPO_PATH="$REPO_DIR/$REPO_SLUG"
+
+[[ "$PIPELINE_BRANCH_MODE" =~ ^(issue-branch|direct-target)$ ]] || fail "PIPELINE_BRANCH_MODE must be issue-branch or direct-target"
+[[ "$SKIP_PR_CREATE" =~ ^(auto|true|false)$ ]] || fail "SKIP_PR_CREATE must be auto, true, or false"
 
 prepare_repo() {
     if [ ! -d "$REPO_PATH" ]; then
@@ -45,9 +52,20 @@ prepare_repo() {
     git fetch origin
     DEFAULT_BRANCH="$(git remote show origin | awk '/HEAD branch/ {print $NF}')"
     DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
-    git checkout "$DEFAULT_BRANCH"
-    git pull origin "$DEFAULT_BRANCH"
-    git checkout -b "$BRANCH" 2>/dev/null || git checkout "$BRANCH"
+
+    BASE_BRANCH="${TARGET_BRANCH:-$DEFAULT_BRANCH}"
+
+    # Always sync base branch first.
+    git checkout "$BASE_BRANCH" 2>/dev/null || git checkout -b "$BASE_BRANCH" "origin/$BASE_BRANCH"
+    git pull origin "$BASE_BRANCH"
+
+    if [ "$PIPELINE_BRANCH_MODE" = "direct-target" ]; then
+        BRANCH="$BASE_BRANCH"
+        log "Branch mode: direct-target (committing on $BRANCH)"
+    else
+        git checkout -b "$BRANCH" 2>/dev/null || git checkout "$BRANCH"
+        log "Branch mode: issue-branch (working branch $BRANCH from $BASE_BRANCH)"
+    fi
 }
 
 generate_plan() {
@@ -249,6 +267,22 @@ git add -A
 git commit -m "feat: implement issue #$ISSUE_NUMBER - $ISSUE_TITLE" || true
 git push origin "$BRANCH"
 
+CREATE_PR=true
+if [ "$PIPELINE_BRANCH_MODE" = "direct-target" ]; then
+    CREATE_PR=false
+fi
+
+if [ "$SKIP_PR_CREATE" = "true" ]; then
+    CREATE_PR=false
+elif [ "$SKIP_PR_CREATE" = "false" ]; then
+    CREATE_PR=true
+fi
+
+# A PR cannot be created when branch and base are the same.
+if [ "$BRANCH" = "$BASE_BRANCH" ]; then
+    CREATE_PR=false
+fi
+
 if [ "$TEST_PASSED" = true ]; then
     PR_TITLE="feat: $ISSUE_TITLE"
     PR_LABEL="ready-for-review"
@@ -289,12 +323,16 @@ $(cat test_output.txt 2>/dev/null || echo 'no output')
 \`\`\`"
 fi
 
-gh pr create \
-    --title "$PR_TITLE" \
-    --body "$PR_BODY" \
-    --base "$DEFAULT_BRANCH" \
-    --head "$BRANCH" || log "PR already exists or creation failed"
+if [ "$CREATE_PR" = true ]; then
+    gh pr create \
+        --title "$PR_TITLE" \
+        --body "$PR_BODY" \
+        --base "$BASE_BRANCH" \
+        --head "$BRANCH" || log "PR already exists or creation failed"
 
-gh pr edit "$BRANCH" --add-label "$PR_LABEL" >/dev/null 2>&1 || log "Label '$PR_LABEL' could not be added"
-
-log "Done - PR opened for issue #$ISSUE_NUMBER"
+    gh pr edit "$BRANCH" --add-label "$PR_LABEL" >/dev/null 2>&1 || log "Label '$PR_LABEL' could not be added"
+    log "Done - PR opened for issue #$ISSUE_NUMBER"
+else
+    gh issue edit "$ISSUE_NUMBER" --repo "$GITHUB_REPO" --add-label "$PR_LABEL" >/dev/null 2>&1 || log "Issue label '$PR_LABEL' could not be added"
+    log "Done - committed directly to $BRANCH for issue #$ISSUE_NUMBER (PR skipped)"
+fi

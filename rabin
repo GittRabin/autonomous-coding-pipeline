@@ -39,6 +39,7 @@ Examples:
     rabin update
     rabin update --ref main
     rabin update --cli-only
+    rabin configure --current
     rabin configure project-a --repo owner/repo-a
     rabin configure --plan-model-provider ollama
     rabin configure project-b --repo owner/repo-b
@@ -58,6 +59,7 @@ Usage:
 
 Options:
     --repo <owner/name>         Target repository (auto-detected in a git repo)
+    --current                   Use current checked-out git branch (direct-target mode)
     --anthropic-key <key>       Optional Anthropic API key
     --github-token <token>      GitHub token (defaults to gh auth token)
     --work-dir <path>           Install location (default: $HOME/pipeline)
@@ -69,6 +71,9 @@ Options:
     --aider-model <name>        Aider model (default: ollama/<ollama-model>)
     --aider-editor-model <name> Optional Aider editor model
     --aider-architect <0|1>     Enable Aider architect mode (default: 0)
+    --target-branch <name>      Target base branch (default: repo default branch)
+    --branch-mode <name>        issue-branch|direct-target (default: issue-branch)
+    --skip-pr-create <name>     auto|true|false (default: auto)
     --enable                    Enable/start timer for profile after saving (default)
     --no-enable                 Save profile only, do not enable timer
     --poll-interval <minutes>   Poll interval (default: 5)
@@ -163,6 +168,9 @@ PLAN_MODEL_PROVIDER=${PLAN_MODEL_PROVIDER:-auto}
 AIDER_MODEL=${AIDER_MODEL:-ollama/$OLLAMA_MODEL}
 AIDER_EDITOR_MODEL=${AIDER_EDITOR_MODEL:-}
 AIDER_ARCHITECT=${AIDER_ARCHITECT:-0}
+TARGET_BRANCH=${TARGET_BRANCH:-}
+PIPELINE_BRANCH_MODE=${PIPELINE_BRANCH_MODE:-issue-branch}
+SKIP_PR_CREATE=${SKIP_PR_CREATE:-auto}
 VENV_DIR=${VENV_DIR:-$HOME/.venv/pipeline}
 TRIGGER_LABEL=${TRIGGER_LABEL:-overnight-task}
 PROCESSING_LABEL=${PROCESSING_LABEL:-processing}
@@ -297,6 +305,12 @@ cmd_configure() {
     local aider_model="${AIDER_MODEL:-ollama/$ollama_model}"
     local aider_editor_model="${AIDER_EDITOR_MODEL:-}"
     local aider_architect="${AIDER_ARCHITECT:-0}"
+    local target_branch="${TARGET_BRANCH:-}"
+    local pipeline_branch_mode="${PIPELINE_BRANCH_MODE:-issue-branch}"
+    local skip_pr_create="${SKIP_PR_CREATE:-auto}"
+    local use_current_branch=0
+    local branch_mode_explicit=0
+    local skip_pr_explicit=0
     local poll_interval="${POLL_INTERVAL_MINUTES:-5}"
     local trigger_label="${TRIGGER_LABEL:-overnight-task}"
     local processing_label="${PROCESSING_LABEL:-processing}"
@@ -307,6 +321,7 @@ cmd_configure() {
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --repo) repo="$2"; shift 2 ;;
+            --current) use_current_branch=1; shift 1 ;;
             --anthropic-key) anthropic_key="$2"; shift 2 ;;
             --github-token) github_token="$2"; shift 2 ;;
             --work-dir) work_dir="$2"; shift 2 ;;
@@ -318,6 +333,9 @@ cmd_configure() {
             --aider-model) aider_model="$2"; shift 2 ;;
             --aider-editor-model) aider_editor_model="$2"; shift 2 ;;
             --aider-architect) aider_architect="$2"; shift 2 ;;
+            --target-branch) target_branch="$2"; shift 2 ;;
+            --branch-mode) pipeline_branch_mode="$2"; branch_mode_explicit=1; shift 2 ;;
+            --skip-pr-create) skip_pr_create="$2"; skip_pr_explicit=1; shift 2 ;;
             --enable) auto_enable=1; shift 1 ;;
             --no-enable) auto_enable=0; shift 1 ;;
             --poll-interval) poll_interval="$2"; shift 2 ;;
@@ -354,6 +372,27 @@ cmd_configure() {
         exit 1
     fi
 
+    if [ "$use_current_branch" -eq 1 ]; then
+        if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            echo "rabin: --current requires running inside a git repository" >&2
+            exit 1
+        fi
+
+        current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+        if [ -z "$current_branch" ] || [ "$current_branch" = "HEAD" ]; then
+            echo "rabin: --current requires a checked-out branch (not detached HEAD)" >&2
+            exit 1
+        fi
+
+        target_branch="$current_branch"
+        if [ "$branch_mode_explicit" -eq 0 ]; then
+            pipeline_branch_mode="direct-target"
+        fi
+        if [ "$skip_pr_explicit" -eq 0 ]; then
+            skip_pr_create="true"
+        fi
+    fi
+
     if [ -z "$profile" ]; then
         profile="$(echo "$repo" | sed -E 's#/#-#g')"
     fi
@@ -388,6 +427,16 @@ cmd_configure() {
         exit 1
     }
 
+    [[ "$pipeline_branch_mode" =~ ^(issue-branch|direct-target)$ ]] || {
+        echo "rabin: --branch-mode must be issue-branch or direct-target" >&2
+        exit 1
+    }
+
+    [[ "$skip_pr_create" =~ ^(auto|true|false)$ ]] || {
+        echo "rabin: --skip-pr-create must be auto, true, or false" >&2
+        exit 1
+    }
+
     ensure_config_dir
     validate_profile_name "$profile"
     local file="$CONFIG_DIR/$profile.env"
@@ -402,6 +451,9 @@ PLAN_MODEL_PROVIDER=$plan_model_provider
 AIDER_MODEL=$aider_model
 AIDER_EDITOR_MODEL=$aider_editor_model
 AIDER_ARCHITECT=$aider_architect
+TARGET_BRANCH=$target_branch
+PIPELINE_BRANCH_MODE=$pipeline_branch_mode
+SKIP_PR_CREATE=$skip_pr_create
 WORK_DIR=$work_dir
 REPO_DIR=$repo_dir
 VENV_DIR=$venv_dir
@@ -463,6 +515,9 @@ cmd_show() {
     echo "AIDER_MODEL=${AIDER_MODEL:-}"
     echo "AIDER_EDITOR_MODEL=${AIDER_EDITOR_MODEL:-}"
     echo "AIDER_ARCHITECT=${AIDER_ARCHITECT:-}"
+    echo "TARGET_BRANCH=${TARGET_BRANCH:-}"
+    echo "PIPELINE_BRANCH_MODE=${PIPELINE_BRANCH_MODE:-}"
+    echo "SKIP_PR_CREATE=${SKIP_PR_CREATE:-}"
     echo "POLL_INTERVAL_MINUTES=${POLL_INTERVAL_MINUTES:-}"
     echo "TRIGGER_LABEL=${TRIGGER_LABEL:-}"
     echo "PROCESSING_LABEL=${PROCESSING_LABEL:-}"
