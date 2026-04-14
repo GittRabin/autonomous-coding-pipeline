@@ -23,6 +23,8 @@ PLAN_MODEL_PROVIDER="${PLAN_MODEL_PROVIDER:-auto}"
 AIDER_MODEL="${AIDER_MODEL:-ollama/$OLLAMA_MODEL}"
 AIDER_EDITOR_MODEL="${AIDER_EDITOR_MODEL:-}"
 AIDER_ARCHITECT="${AIDER_ARCHITECT:-0}"
+AIDER_TRACE="${AIDER_TRACE:-true}"
+AIDER_TRACE_DIR="${AIDER_TRACE_DIR:-$HOME/.local/state/rabin}"
 TARGET_BRANCH="${TARGET_BRANCH:-}"
 PIPELINE_BRANCH_MODE="${PIPELINE_BRANCH_MODE:-issue-branch}"
 SKIP_PR_CREATE="${SKIP_PR_CREATE:-auto}"
@@ -229,10 +231,25 @@ Output only the plan in markdown, no preamble."
 
 run_aider() {
     local attempt=0
+    local aider_log_file=""
+    local aider_prompt_file=""
+
+    if is_truthy "$AIDER_TRACE"; then
+        mkdir -p "$AIDER_TRACE_DIR"
+        local trace_stamp
+        trace_stamp="issue-${ISSUE_NUMBER}-$(date '+%Y%m%d-%H%M%S')"
+        aider_log_file="$AIDER_TRACE_DIR/aider-${trace_stamp}.log"
+        aider_prompt_file="$AIDER_TRACE_DIR/aider-${trace_stamp}.prompt.md"
+        cp PLAN.md "$aider_prompt_file"
+        log "Aider trace enabled"
+        log "Aider prompt: $aider_prompt_file"
+        log "Aider output: $aider_log_file"
+    fi
 
     while [ $attempt -lt $MAX_RETRIES ]; do
         attempt=$((attempt + 1))
         log "Aider attempt $attempt of $MAX_RETRIES..."
+        log "Aider model: $AIDER_MODEL"
 
         AIDER_ARGS=(
             --yes
@@ -249,7 +266,11 @@ run_aider() {
             AIDER_ARGS+=(--editor-model "$AIDER_EDITOR_MODEL")
         fi
 
-        if aider "${AIDER_ARGS[@]}"; then
+        if [ -n "$aider_log_file" ]; then
+            if aider "${AIDER_ARGS[@]}" 2>&1 | tee -a "$aider_log_file"; then
+                return 0
+            fi
+        elif aider "${AIDER_ARGS[@]}"; then
             return 0
         fi
 

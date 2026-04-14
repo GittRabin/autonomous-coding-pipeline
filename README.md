@@ -85,6 +85,8 @@ Use [.env.example](.env.example) only if you want to pre-seed defaults. In norma
 - `AIDER_MODEL` — default `ollama/<OLLAMA_MODEL>`
 - `AIDER_EDITOR_MODEL` — optional separate editor model for Aider
 - `AIDER_ARCHITECT` — set `1` to enable Aider architect mode
+- `AIDER_TRACE` — `true` by default; stores per-run prompt and streamed output logs
+- `AIDER_TRACE_DIR` — directory for Aider trace files (default `$HOME/.local/state/rabin`)
 - Installer links `aider` to `~/.local/bin/aider` for direct shell use
 - `TARGET_BRANCH` — optional base branch to work against
 - `PIPELINE_BRANCH_MODE` — `issue-branch` (default) or `direct-target`
