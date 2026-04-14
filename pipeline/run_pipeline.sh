@@ -17,6 +17,8 @@ GITHUB_REPO="${GITHUB_REPO:-}"
 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5-coder:1.5b}"
 OLLAMA_PLANNER_MODEL="${OLLAMA_PLANNER_MODEL:-$OLLAMA_MODEL}"
+OLLAMA_AUTO_PULL="${OLLAMA_AUTO_PULL:-true}"
+OLLAMA_FALLBACK_MODEL="${OLLAMA_FALLBACK_MODEL:-qwen2.5-coder:1.5b}"
 PLAN_MODEL_PROVIDER="${PLAN_MODEL_PROVIDER:-auto}"
 AIDER_MODEL="${AIDER_MODEL:-ollama/$OLLAMA_MODEL}"
 AIDER_EDITOR_MODEL="${AIDER_EDITOR_MODEL:-}"
@@ -41,6 +43,84 @@ REPO_PATH="${REPO_PATH_OVERRIDE:-$REPO_DIR/$REPO_SLUG}"
 
 [[ "$PIPELINE_BRANCH_MODE" =~ ^(issue-branch|direct-target)$ ]] || fail "PIPELINE_BRANCH_MODE must be issue-branch or direct-target"
 [[ "$SKIP_PR_CREATE" =~ ^(auto|true|false)$ ]] || fail "SKIP_PR_CREATE must be auto, true, or false"
+
+is_truthy() {
+    local v
+    v="$(echo "${1:-}" | tr '[:upper:]' '[:lower:]')"
+    [[ "$v" == "1" || "$v" == "true" || "$v" == "yes" ]]
+}
+
+ensure_ollama_model() {
+    local model="$1"
+
+    [ -n "$model" ] || return 1
+
+    if ollama show "$model" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if is_truthy "$OLLAMA_AUTO_PULL"; then
+        log "Ollama model '$model' not found locally, pulling..."
+        if ollama pull "$model" >/dev/null 2>&1; then
+            log "Pulled model '$model'"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+prepare_ollama_models() {
+    local required_model="$OLLAMA_MODEL"
+    local planner_model="$OLLAMA_PLANNER_MODEL"
+    local aider_model_name=""
+
+    if [[ "$AIDER_MODEL" == ollama/* ]]; then
+        aider_model_name="${AIDER_MODEL#ollama/}"
+    fi
+
+    if ! command -v ollama >/dev/null 2>&1; then
+        fail "Ollama is required for configured models, but 'ollama' is not installed"
+    fi
+
+    local required_ok=1
+    local planner_ok=1
+    local aider_ok=1
+
+    if ! ensure_ollama_model "$required_model"; then
+        required_ok=0
+    fi
+
+    if [ "$planner_model" != "$required_model" ] && ! ensure_ollama_model "$planner_model"; then
+        planner_ok=0
+    fi
+
+    if [ -n "$aider_model_name" ] && [ "$aider_model_name" != "$required_model" ] && [ "$aider_model_name" != "$planner_model" ] && ! ensure_ollama_model "$aider_model_name"; then
+        aider_ok=0
+    fi
+
+    if [ "$required_ok" -eq 1 ] && [ "$planner_ok" -eq 1 ] && [ "$aider_ok" -eq 1 ]; then
+        return 0
+    fi
+
+    log "One or more configured Ollama models are unavailable; trying fallback '$OLLAMA_FALLBACK_MODEL'"
+    ensure_ollama_model "$OLLAMA_FALLBACK_MODEL" || fail "Configured Ollama model(s) unavailable and fallback model '$OLLAMA_FALLBACK_MODEL' could not be prepared"
+
+    if [ "$required_ok" -eq 0 ]; then
+        OLLAMA_MODEL="$OLLAMA_FALLBACK_MODEL"
+        log "Using fallback for OLLAMA_MODEL: $OLLAMA_MODEL"
+    fi
+
+    if [ "$planner_ok" -eq 0 ]; then
+        OLLAMA_PLANNER_MODEL="$OLLAMA_FALLBACK_MODEL"
+        log "Using fallback for OLLAMA_PLANNER_MODEL: $OLLAMA_PLANNER_MODEL"
+    fi
+
+    if [ "$aider_ok" -eq 0 ]; then
+        AIDER_MODEL="ollama/$OLLAMA_FALLBACK_MODEL"
+        log "Using fallback for AIDER_MODEL: $AIDER_MODEL"
+    fi
+}
 
 prepare_repo() {
     if [ ! -d "$REPO_PATH" ]; then
@@ -253,6 +333,10 @@ log "Tool mode: $TOOL_MODE"
 
 if [ -d "$VENV_DIR" ]; then
     source "$VENV_DIR/bin/activate"
+fi
+
+if [[ "$PLAN_MODEL_PROVIDER" == "ollama" || "$PLAN_MODEL_PROVIDER" == "auto" || "$AIDER_MODEL" == ollama/* ]]; then
+    prepare_ollama_models
 fi
 
 generate_plan

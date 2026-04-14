@@ -73,6 +73,8 @@ Use [.env.example](.env.example) only if you want to pre-seed defaults. In norma
 ### Common optional values
 
 - `OLLAMA_MODEL` — defaults to `qwen2.5-coder:1.5b`
+- `OLLAMA_AUTO_PULL` — `true` by default, auto-download missing configured Ollama models
+- `OLLAMA_FALLBACK_MODEL` — model used automatically if configured model cannot be prepared (default `qwen2.5-coder:1.5b`)
 - `WORK_DIR` — install location on the VM
 - `REPO_DIR` — where target repositories are cloned
 - `REPO_PATH_OVERRIDE` — optional explicit local checkout path for a repo profile
