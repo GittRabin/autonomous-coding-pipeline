@@ -1,0 +1,14 @@
+{
+  "name": "pipeline-poller",
+  "version": "1.0.0",
+  "description": "Outbound-only GitHub issue poller for autonomous coding pipeline",
+  "main": "poller.js",
+  "scripts": {
+    "start": "node poller.js",
+    "poll": "node poller.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
+}

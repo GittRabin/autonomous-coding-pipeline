@@ -1,0 +1,13 @@
+.env
+node_modules/
+npm-debug.log*
+__pycache__/
+*.pyc
+venv/
+.venv/
+.DS_Store
+Thumbs.db
+*.log
+work/
+PLAN.md
+test_output.txt

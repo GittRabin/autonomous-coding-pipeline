@@ -1,0 +1,27 @@
+[Unit]
+Description=Autonomous coding pipeline poller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=@@USER@@
+WorkingDirectory=@@INSTALL_DIR@@/poller
+ExecStart=/usr/bin/node @@INSTALL_DIR@@/poller/poller.js
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pipeline-poller
+
+Environment=ANTHROPIC_API_KEY=@@ANTHROPIC_API_KEY@@
+Environment=GITHUB_TOKEN=@@GITHUB_TOKEN@@
+Environment=GITHUB_REPO=@@GITHUB_REPO@@
+Environment=REPO_DIR=@@REPO_DIR@@
+Environment=OLLAMA_MODEL=@@OLLAMA_MODEL@@
+Environment=PIPELINE_SCRIPT=@@INSTALL_DIR@@/pipeline/run_pipeline.sh
+Environment=VENV_DIR=@@VENV_DIR@@
+Environment=TRIGGER_LABEL=@@TRIGGER_LABEL@@
+Environment=PROCESSING_LABEL=@@PROCESSING_LABEL@@
+Environment=TASK_LABEL_CODE=@@TASK_LABEL_CODE@@
+Environment=TASK_LABEL_E2E=@@TASK_LABEL_E2E@@
+Environment="E2E_RUNNER_CMD=@@E2E_RUNNER_CMD@@"
+
