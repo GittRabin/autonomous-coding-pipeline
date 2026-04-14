@@ -10,6 +10,9 @@ log()  { echo -e "${GREEN}[setup]${NC} $1"; }
 warn() { echo -e "${YELLOW}[warn]${NC} $1"; }
 fail() { echo -e "${RED}[error]${NC} $1"; exit 1; }
 
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+
 START_TS="$(date +%s)"
 
 if [ -n "${BASH_SOURCE[0]:-}" ]; then
@@ -39,7 +42,17 @@ POLL_INTERVAL_MINUTES="${POLL_INTERVAL_MINUTES:-5}"
 
 [[ "$POLL_INTERVAL_MINUTES" =~ ^[0-9]+$ ]] || fail "POLL_INTERVAL_MINUTES must be a whole number"
 
+recover_apt_state() {
+    if sudo dpkg --audit >/dev/null 2>&1; then
+        :
+    fi
+
+    sudo dpkg --configure -a || true
+    sudo apt-get -f install -y -qq || true
+}
+
 log "Updating apt and installing system deps..."
+recover_apt_state
 sudo apt-get update -qq
 sudo apt-get install -y -qq \
     curl wget git jq tmux \
@@ -48,18 +61,25 @@ sudo apt-get install -y -qq \
 
 ensure_node_lts() {
     log "Installing/updating Node.js to latest LTS..."
-    curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
 
-    # Ubuntu's libnode-dev from old distro Node can conflict with NodeSource packages.
-    if dpkg -s libnode-dev >/dev/null 2>&1; then
-        warn "Removing conflicting distro package: libnode-dev"
+    # Recover first in case previous installs left dpkg in a broken state.
+    recover_apt_state
+
+    # Purge distro Node packages that frequently conflict with NodeSource.
+    if dpkg -s libnode-dev >/dev/null 2>&1 || dpkg -s nodejs-doc >/dev/null 2>&1; then
+        warn "Removing conflicting distro Node packages (libnode-dev/nodejs-doc)..."
         sudo apt-get remove -y -qq libnode-dev nodejs-doc || true
     fi
 
+    curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+
     if ! sudo apt-get install -y -qq nodejs; then
         warn "Node.js install failed, attempting dpkg recovery..."
-        sudo dpkg --configure -a || true
-        sudo apt-get -f install -y -qq || true
+        recover_apt_state
+
+        # Last-resort cleanup for stale ubuntu node headers package.
+        sudo apt-get remove -y -qq libnode-dev nodejs-doc || true
+
         sudo apt-get install -y -qq nodejs
     fi
 
