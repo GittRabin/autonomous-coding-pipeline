@@ -12,9 +12,10 @@ ISSUE_BODY="${3:-}"
 TOOL_MODE="${4:-${TOOL_MODE:-task-code}}"
 
 REPO_DIR="${REPO_DIR:-$HOME/repos}"
+REPO_PATH_OVERRIDE="${REPO_PATH_OVERRIDE:-}"
 GITHUB_REPO="${GITHUB_REPO:-}"
 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
-OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5-coder:7b}"
+OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5-coder:1.5b}"
 OLLAMA_PLANNER_MODEL="${OLLAMA_PLANNER_MODEL:-$OLLAMA_MODEL}"
 PLAN_MODEL_PROVIDER="${PLAN_MODEL_PROVIDER:-auto}"
 AIDER_MODEL="${AIDER_MODEL:-ollama/$OLLAMA_MODEL}"
@@ -36,17 +37,23 @@ fail() { echo "[pipeline #$ISSUE_NUMBER] $(date '+%H:%M:%S') FAILED: $1"; exit 1
 
 BRANCH="task/issue-${ISSUE_NUMBER}"
 REPO_SLUG="${GITHUB_REPO//\//_}"
-REPO_PATH="$REPO_DIR/$REPO_SLUG"
+REPO_PATH="${REPO_PATH_OVERRIDE:-$REPO_DIR/$REPO_SLUG}"
 
 [[ "$PIPELINE_BRANCH_MODE" =~ ^(issue-branch|direct-target)$ ]] || fail "PIPELINE_BRANCH_MODE must be issue-branch or direct-target"
 [[ "$SKIP_PR_CREATE" =~ ^(auto|true|false)$ ]] || fail "SKIP_PR_CREATE must be auto, true, or false"
 
 prepare_repo() {
     if [ ! -d "$REPO_PATH" ]; then
+        if [ -n "$REPO_PATH_OVERRIDE" ]; then
+            fail "Configured REPO_PATH_OVERRIDE does not exist: $REPO_PATH_OVERRIDE"
+        fi
+
         log "Cloning repo..."
         mkdir -p "$REPO_DIR"
         gh repo clone "$GITHUB_REPO" "$REPO_PATH"
     fi
+
+    [ -d "$REPO_PATH/.git" ] || fail "Repository path is not a git repo: $REPO_PATH"
 
     cd "$REPO_PATH"
     git fetch origin

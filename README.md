@@ -72,9 +72,10 @@ Use [.env.example](.env.example) only if you want to pre-seed defaults. In norma
 
 ### Common optional values
 
-- `OLLAMA_MODEL` — defaults to `qwen2.5-coder:7b`
+- `OLLAMA_MODEL` — defaults to `qwen2.5-coder:1.5b`
 - `WORK_DIR` — install location on the VM
 - `REPO_DIR` — where target repositories are cloned
+- `REPO_PATH_OVERRIDE` — optional explicit local checkout path for a repo profile
 - `VENV_DIR` — Python virtual environment path
 - `POLL_INTERVAL_MINUTES` — timer frequency, default `5`
 - `OLLAMA_PLANNER_MODEL` — planner model for local plan generation
@@ -176,6 +177,7 @@ cd /home/ubuntu/projects/repo-b && rabin configure
 
 `rabin configure` reuses your existing `gh` login by default (`gh auth token`) when `--github-token` is not provided.
 It also initializes required pipeline labels by default (`overnight-task`, `processing`, `task-code`, `task-e2e`, `ready-for-review`, `needs-human-review`).
+When run inside a git repo, `rabin configure` captures that checkout path and the pipeline reuses it (instead of cloning another copy).
 
 Shortcut for current checked-out branch (direct commits, no PR by default):
 

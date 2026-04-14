@@ -65,7 +65,7 @@ Options:
     --work-dir <path>           Install location (default: $HOME/pipeline)
     --repo-dir <path>           Clone base dir (default: $HOME/repos)
     --venv-dir <path>           Python venv path (default: $HOME/.venv/pipeline)
-    --ollama-model <name>       Local editor model (default: qwen2.5-coder:7b)
+    --ollama-model <name>       Local editor model (default: qwen2.5-coder:1.5b)
     --ollama-planner-model <name>  Local planner model (default: ollama-model)
     --plan-model-provider <name>    Plan backend: auto|ollama|anthropic|claude-cli
     --aider-model <name>        Aider model (default: ollama/<ollama-model>)
@@ -191,7 +191,7 @@ ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
 GITHUB_TOKEN=${GITHUB_TOKEN:-}
 GITHUB_REPO=${GITHUB_REPO:-}
 REPO_DIR=${REPO_DIR:-$HOME/repos}
-OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:7b}
+OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:1.5b}
 OLLAMA_PLANNER_MODEL=${OLLAMA_PLANNER_MODEL:-$OLLAMA_MODEL}
 PLAN_MODEL_PROVIDER=${PLAN_MODEL_PROVIDER:-auto}
 AIDER_MODEL=${AIDER_MODEL:-ollama/$OLLAMA_MODEL}
@@ -200,6 +200,7 @@ AIDER_ARCHITECT=${AIDER_ARCHITECT:-0}
 TARGET_BRANCH=${TARGET_BRANCH:-}
 PIPELINE_BRANCH_MODE=${PIPELINE_BRANCH_MODE:-issue-branch}
 SKIP_PR_CREATE=${SKIP_PR_CREATE:-auto}
+REPO_PATH_OVERRIDE=${REPO_PATH_OVERRIDE:-}
 VENV_DIR=${VENV_DIR:-$HOME/.venv/pipeline}
 TRIGGER_LABEL=${TRIGGER_LABEL:-overnight-task}
 PROCESSING_LABEL=${PROCESSING_LABEL:-processing}
@@ -328,7 +329,7 @@ cmd_configure() {
     local work_dir="${WORK_DIR:-$HOME/pipeline}"
     local repo_dir="${REPO_DIR:-$HOME/repos}"
     local venv_dir="${VENV_DIR:-$HOME/.venv/pipeline}"
-    local ollama_model="${OLLAMA_MODEL:-qwen2.5-coder:7b}"
+    local ollama_model="${OLLAMA_MODEL:-qwen2.5-coder:1.5b}"
     local ollama_planner_model="${OLLAMA_PLANNER_MODEL:-$ollama_model}"
     local plan_model_provider="${PLAN_MODEL_PROVIDER:-auto}"
     local aider_model="${AIDER_MODEL:-ollama/$ollama_model}"
@@ -337,6 +338,7 @@ cmd_configure() {
     local target_branch="${TARGET_BRANCH:-}"
     local pipeline_branch_mode="${PIPELINE_BRANCH_MODE:-issue-branch}"
     local skip_pr_create="${SKIP_PR_CREATE:-auto}"
+    local repo_path_override="${REPO_PATH_OVERRIDE:-}"
     local init_labels=1
     local use_current_branch=0
     local branch_mode_explicit=0
@@ -397,6 +399,10 @@ cmd_configure() {
             remote_url="$(git config --get remote.origin.url 2>/dev/null || true)"
             repo="$(echo "$remote_url" | sed -E 's#^git@github.com:##; s#^https://github.com/##; s#\.git$##')"
         fi
+    fi
+
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        repo_path_override="$(git rev-parse --show-toplevel 2>/dev/null || true)"
     fi
 
     if [ -z "$repo" ]; then
@@ -486,6 +492,7 @@ AIDER_ARCHITECT=$aider_architect
 TARGET_BRANCH=$target_branch
 PIPELINE_BRANCH_MODE=$pipeline_branch_mode
 SKIP_PR_CREATE=$skip_pr_create
+REPO_PATH_OVERRIDE=$repo_path_override
 WORK_DIR=$work_dir
 REPO_DIR=$repo_dir
 VENV_DIR=$venv_dir
@@ -557,6 +564,7 @@ cmd_show() {
     echo "TARGET_BRANCH=${TARGET_BRANCH:-}"
     echo "PIPELINE_BRANCH_MODE=${PIPELINE_BRANCH_MODE:-}"
     echo "SKIP_PR_CREATE=${SKIP_PR_CREATE:-}"
+    echo "REPO_PATH_OVERRIDE=${REPO_PATH_OVERRIDE:-}"
     echo "POLL_INTERVAL_MINUTES=${POLL_INTERVAL_MINUTES:-}"
     echo "TRIGGER_LABEL=${TRIGGER_LABEL:-}"
     echo "PROCESSING_LABEL=${PROCESSING_LABEL:-}"

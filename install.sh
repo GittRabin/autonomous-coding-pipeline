@@ -35,7 +35,7 @@ if [ ! -d "$SCRIPT_DIR/poller" ] || [ ! -d "$SCRIPT_DIR/pipeline" ] || [ ! -d "$
     [ -n "$SOURCE_DIR" ] || fail "Failed to download installer source for ${INSTALL_REPO}@${INSTALL_REF}"
 fi
 
-OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5-coder:7b}"
+OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5-coder:1.5b}"
 WORK_DIR="${WORK_DIR:-$HOME/pipeline}"
 VENV_DIR="${VENV_DIR:-$HOME/.venv/pipeline}"
 POLL_INTERVAL_MINUTES="${POLL_INTERVAL_MINUTES:-5}"
