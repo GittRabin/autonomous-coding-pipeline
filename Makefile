@@ -1,21 +1,30 @@
-.PHONY: logs restart status run-now uninstall
+.PHONY: logs restart status run-now uninstall status-all
+
+PROFILE ?= default
+
+SERVICE = pipeline-poller@$(PROFILE).service
+TIMER = pipeline-poller@$(PROFILE).timer
 
 logs:
-	sudo journalctl -u pipeline-poller.service -u pipeline-poller.timer -f
+	sudo journalctl -u $(SERVICE) -u $(TIMER) -f
 
 restart:
-	sudo systemctl restart pipeline-poller.timer
+	sudo systemctl restart $(TIMER)
 
 status:
-	sudo systemctl --no-pager status pipeline-poller.timer pipeline-poller.service
+	sudo systemctl --no-pager status $(TIMER) $(SERVICE)
+
+status-all:
+	sudo systemctl list-timers --all 'pipeline-poller@*.timer' --no-pager
 
 run-now:
-	sudo systemctl start pipeline-poller.service
+	sudo systemctl start $(SERVICE)
 
 uninstall:
-	sudo systemctl stop pipeline-poller.timer || true
-	sudo systemctl disable pipeline-poller.timer || true
-	sudo rm -f /etc/systemd/system/pipeline-poller.service /etc/systemd/system/pipeline-poller.timer
+	sudo systemctl stop $(TIMER) || true
+	sudo systemctl disable $(TIMER) || true
+	sudo rm -f /etc/rabin/projects/$(PROFILE).env
+	sudo rm -rf /etc/systemd/system/$(TIMER).d
 	sudo systemctl daemon-reload
 	sudo systemctl reset-failed
-	@echo "Uninstalled pipeline-poller timer and service."
+	@echo "Removed profile $(PROFILE) from pipeline-poller templates."

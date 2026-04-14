@@ -42,7 +42,8 @@ The VM only makes outbound requests to GitHub and model providers.
 
 ## Repository layout
 
-- [setup.sh](setup.sh) — installs dependencies, the poller, and the systemd timer
+- [install.sh](install.sh) — installs dependencies, the poller, and the systemd timer
+- [setup.sh](setup.sh) — compatibility wrapper that delegates to install.sh
 - [poller/poller.js](poller/poller.js) — outbound GitHub poller that claims work by label
 - [pipeline/run_pipeline.sh](pipeline/run_pipeline.sh) — branch, planning, tool execution, testing, and PR creation
 - [systemd/pipeline-poller.service.template](systemd/pipeline-poller.service.template) — oneshot service run by the timer
@@ -55,19 +56,19 @@ The VM only makes outbound requests to GitHub and model providers.
 - Ubuntu or another Linux machine with systemd
 - Node.js 18+
 - Python 3 with venv support
-- GitHub CLI access to the target repository
-- An Anthropic API key
-- Ollama installed locally or installable by the setup script
+- GitHub CLI installed and authenticated (`gh auth login`)
+- Ollama installed locally or installable by the install script
+- Optional: Anthropic API key (only if you want Anthropic planner mode)
 
 ## Configuration
 
-Copy values from [.env.example](.env.example) and export them in your shell before running setup.
+Use [.env.example](.env.example) only if you want to pre-seed defaults. In normal usage, install first, then run `rabin configure` inside each target repository.
 
 ### Required
 
-- `ANTHROPIC_API_KEY`
-- `GITHUB_TOKEN`
-- `GITHUB_REPO`
+- None required for `install.sh` bootstrap
+- `rabin configure` auto-detects `GITHUB_REPO` from the current git repository
+- `rabin configure` auto-uses `GITHUB_TOKEN` from `gh auth token`
 
 ### Common optional values
 
@@ -76,6 +77,11 @@ Copy values from [.env.example](.env.example) and export them in your shell befo
 - `REPO_DIR` — where target repositories are cloned
 - `VENV_DIR` — Python virtual environment path
 - `POLL_INTERVAL_MINUTES` — timer frequency, default `5`
+- `OLLAMA_PLANNER_MODEL` — planner model for local plan generation
+- `PLAN_MODEL_PROVIDER` — `auto`, `ollama`, `anthropic`, or `claude-cli`
+- `AIDER_MODEL` — default `ollama/<OLLAMA_MODEL>`
+- `AIDER_EDITOR_MODEL` — optional separate editor model for Aider
+- `AIDER_ARCHITECT` — set `1` to enable Aider architect mode
 
 ### Label customization
 
@@ -95,19 +101,97 @@ Example uses include Claude Code, browser automation, Playwright flows, or MCP-b
 ## Installation
 
 1. Export the required environment variables.
-2. Run:
+2. Run bootstrap installer:
 
-   bash setup.sh
+   bash install.sh
 
-3. Confirm the timer is active:
+   Or run directly via curl (like Claude Code style):
 
-   make status
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/GittRabin/autonomous-coding-pipeline/main/install.sh | bash
+   ```
 
-4. View logs if needed:
+   If you are using a fork or branch, set these before curl:
 
-   make logs
+   ```bash
+   export INSTALL_REPO="yourname/autonomous-coding-pipeline"
+   export INSTALL_REF="main"
+   curl -fsSL "https://raw.githubusercontent.com/${INSTALL_REPO}/${INSTALL_REF}/install.sh" | bash
+   ```
+
+3. Authenticate GitHub CLI (if not already authenticated):
+
+   gh auth login
+
+4. In each target repository directory, run:
+
+   rabin configure
+
+5. Confirm timers are active:
+
+   rabin status --all
+
+6. View logs if needed:
+
+   rabin logs <profile>
 
 ## Daily use
+
+After setup, you can run operations from anywhere using the global `rabin` command.
+
+### CLI help
+
+```bash
+rabin --help
+```
+
+Available commands:
+
+- `rabin configure`
+- `rabin profiles`
+- `rabin show`
+- `rabin enable`
+- `rabin disable`
+- `rabin status`
+- `rabin logs`
+- `rabin restart`
+- `rabin run-now`
+- `rabin urgent`
+- `rabin uninstall`
+
+### Multi-project setup with profiles
+
+If you manage multiple target repositories on one VM, use profile files and enable multiple timer instances.
+
+Create profiles:
+
+```bash
+cd /home/ubuntu/projects/repo-a && rabin configure
+cd /home/ubuntu/projects/repo-b && rabin configure
+```
+
+`rabin configure` reuses your existing `gh` login by default (`gh auth token`) when `--github-token` is not provided.
+
+List and inspect profiles:
+
+```bash
+rabin profiles
+rabin show project-a
+```
+
+Enable all project instances (parallel polling):
+
+```bash
+rabin enable project-a
+rabin enable project-b
+rabin status --all
+```
+
+If you want to disable one project:
+
+```bash
+rabin disable project-b
+```
 
 ### Queue a coding task
 
@@ -119,22 +203,26 @@ Create a GitHub issue and apply:
 
 Use:
 
-- `make run-now`
+- `rabin run-now project-a`
 
 ### Check the current state
 
 Use:
 
-- `make status`
-- `make logs`
+- `rabin status project-a`
+- `rabin logs project-a`
 
 ## Operational commands
 
-- `make logs` — follow poller and timer logs
-- `make status` — inspect timer and service status
-- `make restart` — restart the timer
-- `make run-now` — force an immediate poll
-- `make uninstall` — remove the installed timer and service
+- `rabin status --all` — list all active pipeline timers
+- `rabin status <profile>` — inspect one profile service and timer
+- `rabin logs <profile>` — follow one profile logs
+- `rabin run-now <profile>` — force immediate poll for one profile
+- `rabin urgent <profile>` — urgent immediate poll for one profile
+- `rabin urgent --all` — urgent immediate poll for all profiles
+- `rabin disable <profile>` — disable one project timer
+- `rabin uninstall <profile>` — remove one profile runtime files
+- `rabin uninstall --all` — stop all timers and clear all runtime env files
 
 ## Notes and limitations
 

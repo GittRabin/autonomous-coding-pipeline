@@ -1,11 +1,11 @@
 [Unit]
-Description=Run the autonomous coding pipeline poller every @@POLL_INTERVAL_MINUTES@@ minutes
+Description=Run autonomous coding pipeline poller (%i)
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=@@POLL_INTERVAL_MINUTES@@min
+OnUnitActiveSec=@@DEFAULT_POLL_INTERVAL_MINUTES@@min
 AccuracySec=1min
-Unit=pipeline-poller.service
+Unit=pipeline-poller@%i.service
 Persistent=true
 
 [Install]

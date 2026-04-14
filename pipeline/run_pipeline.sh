@@ -15,6 +15,11 @@ REPO_DIR="${REPO_DIR:-$HOME/repos}"
 GITHUB_REPO="${GITHUB_REPO:-}"
 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5-coder:7b}"
+OLLAMA_PLANNER_MODEL="${OLLAMA_PLANNER_MODEL:-$OLLAMA_MODEL}"
+PLAN_MODEL_PROVIDER="${PLAN_MODEL_PROVIDER:-auto}"
+AIDER_MODEL="${AIDER_MODEL:-ollama/$OLLAMA_MODEL}"
+AIDER_EDITOR_MODEL="${AIDER_EDITOR_MODEL:-}"
+AIDER_ARCHITECT="${AIDER_ARCHITECT:-0}"
 VENV_DIR="${VENV_DIR:-$HOME/.venv/pipeline}"
 E2E_RUNNER_CMD="${E2E_RUNNER_CMD:-}"
 MAX_RETRIES=3
@@ -24,10 +29,10 @@ log()  { echo "[pipeline #$ISSUE_NUMBER] $(date '+%H:%M:%S') $1"; }
 fail() { echo "[pipeline #$ISSUE_NUMBER] $(date '+%H:%M:%S') FAILED: $1"; exit 1; }
 
 [[ -z "$GITHUB_REPO" ]] && fail "GITHUB_REPO is not set"
-[[ -z "$ANTHROPIC_API_KEY" ]] && fail "ANTHROPIC_API_KEY is not set"
 
 BRANCH="task/issue-${ISSUE_NUMBER}"
-REPO_PATH="$REPO_DIR/$(basename "$GITHUB_REPO")"
+REPO_SLUG="${GITHUB_REPO//\//_}"
+REPO_PATH="$REPO_DIR/$REPO_SLUG"
 
 prepare_repo() {
     if [ ! -d "$REPO_PATH" ]; then
@@ -46,29 +51,70 @@ prepare_repo() {
 }
 
 generate_plan() {
-    log "Generating PLAN.md via Claude..."
+    local prompt
+    prompt="You are a senior engineer. Decompose this task into a precise, ordered list of coding steps with acceptance criteria. Be specific about file paths and function names where possible.
 
-    PROMPT_BODY=$(jq -n \
-        --arg title "$ISSUE_TITLE" \
-        --arg body "$ISSUE_BODY" \
-        --arg mode "$TOOL_MODE" \
-        '{
-            model: "claude-sonnet-4-5",
-            max_tokens: 2048,
-            messages: [{
-                role: "user",
-                content: ("You are a senior engineer. Decompose this task into a precise, ordered list of coding steps with acceptance criteria. Be specific about file paths and function names where possible.\n\nPreferred execution route: " + $mode + "\n\nTask title: " + $title + "\n\nTask details:\n" + $body + "\n\nOutput only the plan in markdown, no preamble.")
-            }]
-        }')
+Preferred execution route: $TOOL_MODE
 
-    PLAN=$(curl -s https://api.anthropic.com/v1/messages \
-        -H "x-api-key: $ANTHROPIC_API_KEY" \
-        -H "anthropic-version: 2023-06-01" \
-        -H "content-type: application/json" \
-        -d "$PROMPT_BODY" | jq -r '.content[0].text')
+Task title: $ISSUE_TITLE
 
-    if [[ -z "$PLAN" || "$PLAN" == "null" ]]; then
-        fail "Claude API returned empty plan"
+Task details:
+$ISSUE_BODY
+
+Output only the plan in markdown, no preamble."
+
+    PLAN=""
+
+    if [[ "$PLAN_MODEL_PROVIDER" == "anthropic" ]] || { [[ "$PLAN_MODEL_PROVIDER" == "auto" ]] && [[ -n "$ANTHROPIC_API_KEY" ]]; }; then
+        log "Generating PLAN.md via Anthropic..."
+        PROMPT_BODY=$(jq -n \
+            --arg text "$prompt" \
+            '{
+                model: "claude-sonnet-4-5",
+                max_tokens: 2048,
+                messages: [{ role: "user", content: $text }]
+            }')
+
+        PLAN=$(curl -s https://api.anthropic.com/v1/messages \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d "$PROMPT_BODY" | jq -r '.content[0].text // empty')
+    fi
+
+    if [[ -z "$PLAN" ]] && { [[ "$PLAN_MODEL_PROVIDER" == "claude-cli" ]] || [[ "$PLAN_MODEL_PROVIDER" == "auto" ]]; }; then
+        if command -v claude >/dev/null 2>&1; then
+            log "Generating PLAN.md via Claude Code CLI..."
+            PLAN=$(claude -p "$prompt" 2>/dev/null || true)
+        fi
+    fi
+
+    if [[ -z "$PLAN" ]] && { [[ "$PLAN_MODEL_PROVIDER" == "ollama" ]] || [[ "$PLAN_MODEL_PROVIDER" == "auto" ]]; }; then
+        if command -v ollama >/dev/null 2>&1; then
+            log "Generating PLAN.md via Ollama model $OLLAMA_PLANNER_MODEL..."
+            PLAN=$(ollama run "$OLLAMA_PLANNER_MODEL" "$prompt" 2>/dev/null || true)
+        fi
+    fi
+
+    if [[ -z "$PLAN" ]]; then
+        log "Planner model unavailable, writing fallback PLAN.md template"
+        PLAN="# Plan for issue #$ISSUE_NUMBER
+
+## Context
+- Route: $TOOL_MODE
+- Title: $ISSUE_TITLE
+
+## Steps
+1. Reproduce and understand the requested change.
+2. Identify impacted files and implement the code updates.
+3. Run available tests or checks and capture output.
+4. Prepare commit and PR with summary and validation notes.
+
+## Acceptance Criteria
+- Requested behavior is implemented.
+- Existing tests pass, or failures are documented.
+- PR includes clear change summary and test status.
+"
     fi
 
     echo "$PLAN" > PLAN.md
@@ -83,13 +129,22 @@ run_aider() {
         attempt=$((attempt + 1))
         log "Aider attempt $attempt of $MAX_RETRIES..."
 
-        if aider \
-            --architect \
-            --model claude-sonnet-4-5 \
-            --editor-model "ollama/$OLLAMA_MODEL" \
-            --yes \
-            --no-pretty \
-            --message "$(cat PLAN.md)"; then
+        AIDER_ARGS=(
+            --yes
+            --no-pretty
+            --model "$AIDER_MODEL"
+            --message "$(cat PLAN.md)"
+        )
+
+        if [[ "$AIDER_ARCHITECT" == "1" || "$AIDER_ARCHITECT" == "true" ]]; then
+            AIDER_ARGS=(--architect "${AIDER_ARGS[@]}")
+        fi
+
+        if [ -n "$AIDER_EDITOR_MODEL" ]; then
+            AIDER_ARGS+=(--editor-model "$AIDER_EDITOR_MODEL")
+        fi
+
+        if aider "${AIDER_ARGS[@]}"; then
             return 0
         fi
 

@@ -1,0 +1,572 @@
+#!/bin/bash
+set -euo pipefail
+
+WORK_DIR="${RABIN_WORK_DIR:-$HOME/pipeline}"
+CONFIG_DIR="${RABIN_CONFIG_DIR:-$HOME/.config/rabin}"
+SYSTEM_PROJECT_DIR="/etc/rabin/projects"
+DEFAULT_PROFILE="${RABIN_DEFAULT_PROFILE:-default}"
+MASK="********"
+
+usage() {
+    cat <<'EOF'
+rabin - manage the Autonomous Coding Pipeline
+
+Usage:
+  rabin <command>
+  rabin --help
+
+Commands:
+    configure    Create/update a project profile env file
+    profiles     List saved project profiles
+    show         Show values from a saved profile
+    enable       Enable a profile timer instance
+    disable      Disable a profile timer instance
+    status       Show timer/service status for profile or --all
+    logs         Tail service and timer logs for a profile
+    restart      Restart a profile timer
+    run-now      Trigger immediate run for a profile
+    urgent       Trigger immediate run now (alias for run-now)
+    uninstall    Remove one profile or all profile runtime files
+    help         Show this help message
+
+Notes:
+    - Profiles are stored in $HOME/.config/rabin/*.env
+    - System runtime env files are stored in /etc/rabin/projects/*.env
+    - If profile is omitted for runtime commands, default is "default"
+
+Examples:
+    rabin configure project-a --repo owner/repo-a
+    rabin configure --plan-model-provider ollama
+    rabin configure project-b --repo owner/repo-b
+    rabin enable project-a
+    rabin enable project-b
+    rabin status --all
+    rabin urgent project-a
+    rabin urgent --all
+    rabin logs project-a
+EOF
+}
+
+configure_usage() {
+        cat <<'EOF'
+Usage:
+    rabin configure [profile] [options]
+
+Options:
+    --repo <owner/name>         Target repository (auto-detected in a git repo)
+    --anthropic-key <key>       Optional Anthropic API key
+    --github-token <token>      GitHub token (defaults to gh auth token)
+    --work-dir <path>           Install location (default: $HOME/pipeline)
+    --repo-dir <path>           Clone base dir (default: $HOME/repos)
+    --venv-dir <path>           Python venv path (default: $HOME/.venv/pipeline)
+    --ollama-model <name>       Local editor model (default: qwen2.5-coder:7b)
+    --ollama-planner-model <name>  Local planner model (default: ollama-model)
+    --plan-model-provider <name>    Plan backend: auto|ollama|anthropic|claude-cli
+    --aider-model <name>        Aider model (default: ollama/<ollama-model>)
+    --aider-editor-model <name> Optional Aider editor model
+    --aider-architect <0|1>     Enable Aider architect mode (default: 0)
+    --enable                    Enable/start timer for profile after saving (default)
+    --no-enable                 Save profile only, do not enable timer
+    --poll-interval <minutes>   Poll interval (default: 5)
+    --trigger-label <label>     Queue label (default: overnight-task)
+    --processing-label <label>  In-progress label (default: processing)
+    --task-label-code <label>   Code route label (default: task-code)
+    --task-label-e2e <label>    E2E route label (default: task-e2e)
+    --e2e-runner-cmd <cmd>      Optional command for task-e2e
+
+Behavior:
+    - Writes profile to ~/.config/rabin/<profile>.env
+    - If --github-token is omitted, uses: gh auth token
+    - If profile is omitted, derives from detected repo or current directory
+    - Configure enables the timer by default
+EOF
+}
+
+require_install() {
+    command -v systemctl >/dev/null 2>&1 || {
+        echo "rabin: systemctl is required" >&2
+        exit 1
+    }
+
+    if [ ! -f "/etc/systemd/system/pipeline-poller@.service" ] || [ ! -f "/etc/systemd/system/pipeline-poller@.timer" ]; then
+        echo "rabin: systemd templates are not installed" >&2
+        echo "rabin: run install.sh first" >&2
+        exit 1
+    fi
+}
+
+ensure_config_dir() {
+    mkdir -p "$CONFIG_DIR"
+    chmod 700 "$CONFIG_DIR"
+}
+
+load_profile() {
+    local profile="$1"
+    local file="$CONFIG_DIR/$profile.env"
+    if [ ! -f "$file" ]; then
+        echo "rabin: profile not found: $profile" >&2
+        echo "rabin: use 'rabin profiles' to list available profiles" >&2
+        exit 1
+    fi
+
+    set -a
+    # shellcheck disable=SC1090
+    source "$file"
+    set +a
+}
+
+service_name() {
+    local profile="$1"
+    echo "pipeline-poller@${profile}.service"
+}
+
+timer_name() {
+    local profile="$1"
+    echo "pipeline-poller@${profile}.timer"
+}
+
+profile_arg_or_default() {
+    local arg="${1:-}"
+    if [ -n "$arg" ]; then
+        echo "$arg"
+    else
+        echo "$DEFAULT_PROFILE"
+    fi
+}
+
+validate_profile_name() {
+    local profile="$1"
+    [[ "$profile" =~ ^[a-zA-Z0-9._-]+$ ]] || {
+        echo "rabin: invalid profile name '$profile'" >&2
+        echo "rabin: allowed characters are letters, numbers, dot, underscore, dash" >&2
+        exit 1
+    }
+}
+
+write_env_file_from_loaded_profile() {
+    local profile="$1"
+    local tmp_file
+    tmp_file="$(mktemp)"
+
+    cat > "$tmp_file" <<EOF
+ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+GITHUB_TOKEN=${GITHUB_TOKEN:-}
+GITHUB_REPO=${GITHUB_REPO:-}
+REPO_DIR=${REPO_DIR:-$HOME/repos}
+OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:7b}
+OLLAMA_PLANNER_MODEL=${OLLAMA_PLANNER_MODEL:-$OLLAMA_MODEL}
+PLAN_MODEL_PROVIDER=${PLAN_MODEL_PROVIDER:-auto}
+AIDER_MODEL=${AIDER_MODEL:-ollama/$OLLAMA_MODEL}
+AIDER_EDITOR_MODEL=${AIDER_EDITOR_MODEL:-}
+AIDER_ARCHITECT=${AIDER_ARCHITECT:-0}
+VENV_DIR=${VENV_DIR:-$HOME/.venv/pipeline}
+TRIGGER_LABEL=${TRIGGER_LABEL:-overnight-task}
+PROCESSING_LABEL=${PROCESSING_LABEL:-processing}
+TASK_LABEL_CODE=${TASK_LABEL_CODE:-task-code}
+TASK_LABEL_E2E=${TASK_LABEL_E2E:-task-e2e}
+E2E_RUNNER_CMD=${E2E_RUNNER_CMD:-}
+EOF
+
+    sudo mkdir -p "$SYSTEM_PROJECT_DIR"
+    sudo install -m 0600 "$tmp_file" "$SYSTEM_PROJECT_DIR/${profile}.env"
+    rm -f "$tmp_file"
+}
+
+write_timer_override() {
+    local profile="$1"
+    local poll_interval="${POLL_INTERVAL_MINUTES:-5}"
+
+    [[ "$poll_interval" =~ ^[0-9]+$ ]] || {
+        echo "rabin: POLL_INTERVAL_MINUTES for '$profile' must be a whole number" >&2
+        exit 1
+    }
+
+    sudo mkdir -p "/etc/systemd/system/$(timer_name "$profile").d"
+    sudo tee "/etc/systemd/system/$(timer_name "$profile").d/override.conf" > /dev/null <<EOF
+[Timer]
+OnUnitActiveSec=
+OnUnitActiveSec=${poll_interval}min
+EOF
+}
+
+mask_value() {
+    local value="$1"
+    if [ -z "$value" ]; then
+        echo ""
+    else
+        echo "$MASK"
+    fi
+}
+
+cmd_configure() {
+    if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+        configure_usage
+        return 0
+    fi
+
+    local profile=""
+    if [ "$#" -gt 0 ] && [[ ! "$1" =~ ^- ]]; then
+        profile="$1"
+        shift
+    fi
+
+    local auto_enable=1
+
+    local repo="${GITHUB_REPO:-}"
+    local anthropic_key="${ANTHROPIC_API_KEY:-}"
+    local github_token="${GITHUB_TOKEN:-}"
+    local work_dir="${WORK_DIR:-$HOME/pipeline}"
+    local repo_dir="${REPO_DIR:-$HOME/repos}"
+    local venv_dir="${VENV_DIR:-$HOME/.venv/pipeline}"
+    local ollama_model="${OLLAMA_MODEL:-qwen2.5-coder:7b}"
+    local ollama_planner_model="${OLLAMA_PLANNER_MODEL:-$ollama_model}"
+    local plan_model_provider="${PLAN_MODEL_PROVIDER:-auto}"
+    local aider_model="${AIDER_MODEL:-ollama/$ollama_model}"
+    local aider_editor_model="${AIDER_EDITOR_MODEL:-}"
+    local aider_architect="${AIDER_ARCHITECT:-0}"
+    local poll_interval="${POLL_INTERVAL_MINUTES:-5}"
+    local trigger_label="${TRIGGER_LABEL:-overnight-task}"
+    local processing_label="${PROCESSING_LABEL:-processing}"
+    local task_label_code="${TASK_LABEL_CODE:-task-code}"
+    local task_label_e2e="${TASK_LABEL_E2E:-task-e2e}"
+    local e2e_runner_cmd="${E2E_RUNNER_CMD:-}"
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --repo) repo="$2"; shift 2 ;;
+            --anthropic-key) anthropic_key="$2"; shift 2 ;;
+            --github-token) github_token="$2"; shift 2 ;;
+            --work-dir) work_dir="$2"; shift 2 ;;
+            --repo-dir) repo_dir="$2"; shift 2 ;;
+            --venv-dir) venv_dir="$2"; shift 2 ;;
+            --ollama-model) ollama_model="$2"; shift 2 ;;
+            --ollama-planner-model) ollama_planner_model="$2"; shift 2 ;;
+            --plan-model-provider) plan_model_provider="$2"; shift 2 ;;
+            --aider-model) aider_model="$2"; shift 2 ;;
+            --aider-editor-model) aider_editor_model="$2"; shift 2 ;;
+            --aider-architect) aider_architect="$2"; shift 2 ;;
+            --enable) auto_enable=1; shift 1 ;;
+            --no-enable) auto_enable=0; shift 1 ;;
+            --poll-interval) poll_interval="$2"; shift 2 ;;
+            --trigger-label) trigger_label="$2"; shift 2 ;;
+            --processing-label) processing_label="$2"; shift 2 ;;
+            --task-label-code) task_label_code="$2"; shift 2 ;;
+            --task-label-e2e) task_label_e2e="$2"; shift 2 ;;
+            --e2e-runner-cmd) e2e_runner_cmd="$2"; shift 2 ;;
+            --help|-h)
+                configure_usage
+                return 0
+                ;;
+            *)
+                echo "rabin: unknown configure option: $1" >&2
+                configure_usage
+                exit 2
+                ;;
+        esac
+    done
+
+    if [ -z "$repo" ]; then
+        if command -v gh >/dev/null 2>&1; then
+            repo="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"
+        fi
+
+        if [ -z "$repo" ] && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            remote_url="$(git config --get remote.origin.url 2>/dev/null || true)"
+            repo="$(echo "$remote_url" | sed -E 's#^git@github.com:##; s#^https://github.com/##; s#\.git$##')"
+        fi
+    fi
+
+    if [ -z "$repo" ]; then
+        echo "rabin: --repo is required (or run configure inside the target git repository)" >&2
+        exit 1
+    fi
+
+    if [ -z "$profile" ]; then
+        profile="$(echo "$repo" | sed -E 's#/#-#g')"
+    fi
+
+    if [ -z "$profile" ]; then
+        profile="$(basename "$PWD")"
+    fi
+
+    if [ -z "$github_token" ]; then
+        if command -v gh >/dev/null 2>&1; then
+            github_token="$(gh auth token 2>/dev/null || true)"
+        fi
+    fi
+
+    if [ -z "$github_token" ]; then
+        echo "rabin: GITHUB_TOKEN is required (use --github-token or run gh auth login)" >&2
+        exit 1
+    fi
+
+    [[ "$poll_interval" =~ ^[0-9]+$ ]] || {
+        echo "rabin: --poll-interval must be a whole number" >&2
+        exit 1
+    }
+
+    [[ "$plan_model_provider" =~ ^(auto|ollama|anthropic|claude-cli)$ ]] || {
+        echo "rabin: --plan-model-provider must be one of: auto, ollama, anthropic, claude-cli" >&2
+        exit 1
+    }
+
+    [[ "$aider_architect" =~ ^(0|1|true|false)$ ]] || {
+        echo "rabin: --aider-architect must be 0, 1, true, or false" >&2
+        exit 1
+    }
+
+    ensure_config_dir
+    validate_profile_name "$profile"
+    local file="$CONFIG_DIR/$profile.env"
+
+    cat > "$file" <<EOF
+ANTHROPIC_API_KEY=$anthropic_key
+GITHUB_TOKEN=$github_token
+GITHUB_REPO=$repo
+OLLAMA_MODEL=$ollama_model
+OLLAMA_PLANNER_MODEL=$ollama_planner_model
+PLAN_MODEL_PROVIDER=$plan_model_provider
+AIDER_MODEL=$aider_model
+AIDER_EDITOR_MODEL=$aider_editor_model
+AIDER_ARCHITECT=$aider_architect
+WORK_DIR=$work_dir
+REPO_DIR=$repo_dir
+VENV_DIR=$venv_dir
+POLL_INTERVAL_MINUTES=$poll_interval
+TRIGGER_LABEL=$trigger_label
+PROCESSING_LABEL=$processing_label
+TASK_LABEL_CODE=$task_label_code
+TASK_LABEL_E2E=$task_label_e2e
+E2E_RUNNER_CMD=$e2e_runner_cmd
+EOF
+    chmod 600 "$file"
+
+    echo "rabin: profile saved: $profile"
+    echo "rabin: file: $file"
+    echo ""
+    echo "Next steps:"
+    echo "  rabin show $profile"
+    echo "  rabin status $profile"
+
+    if [ "$auto_enable" -eq 1 ]; then
+        echo ""
+        echo "rabin: --enable requested, enabling profile now..."
+        cmd_enable "$profile"
+    fi
+}
+
+cmd_profiles() {
+    ensure_config_dir
+    local found=0
+    local f
+    for f in "$CONFIG_DIR"/*.env; do
+        if [ -f "$f" ]; then
+            found=1
+            basename "$f" .env
+        fi
+    done
+    if [ "$found" -eq 0 ]; then
+        echo "rabin: no profiles found in $CONFIG_DIR"
+    fi
+}
+
+cmd_show() {
+    if [ "$#" -lt 1 ]; then
+        echo "Usage: rabin show <profile>" >&2
+        exit 1
+    fi
+
+    local profile="$1"
+    load_profile "$profile"
+
+    echo "Profile: $profile"
+    echo "GITHUB_REPO=$GITHUB_REPO"
+    echo "WORK_DIR=${WORK_DIR:-}"
+    echo "REPO_DIR=${REPO_DIR:-}"
+    echo "VENV_DIR=${VENV_DIR:-}"
+    echo "OLLAMA_MODEL=${OLLAMA_MODEL:-}"
+    echo "OLLAMA_PLANNER_MODEL=${OLLAMA_PLANNER_MODEL:-}"
+    echo "PLAN_MODEL_PROVIDER=${PLAN_MODEL_PROVIDER:-}"
+    echo "AIDER_MODEL=${AIDER_MODEL:-}"
+    echo "AIDER_EDITOR_MODEL=${AIDER_EDITOR_MODEL:-}"
+    echo "AIDER_ARCHITECT=${AIDER_ARCHITECT:-}"
+    echo "POLL_INTERVAL_MINUTES=${POLL_INTERVAL_MINUTES:-}"
+    echo "TRIGGER_LABEL=${TRIGGER_LABEL:-}"
+    echo "PROCESSING_LABEL=${PROCESSING_LABEL:-}"
+    echo "TASK_LABEL_CODE=${TASK_LABEL_CODE:-}"
+    echo "TASK_LABEL_E2E=${TASK_LABEL_E2E:-}"
+    echo "E2E_RUNNER_CMD=${E2E_RUNNER_CMD:-}"
+    echo "ANTHROPIC_API_KEY=$(mask_value "${ANTHROPIC_API_KEY:-}")"
+    echo "GITHUB_TOKEN=$(mask_value "${GITHUB_TOKEN:-}")"
+}
+
+cmd_enable() {
+    require_install
+    local profile
+    profile="$(profile_arg_or_default "${1:-}")"
+    validate_profile_name "$profile"
+
+    load_profile "$profile"
+
+    [ -n "${GITHUB_REPO:-}" ] || { echo "rabin: GITHUB_REPO missing in profile '$profile'" >&2; exit 1; }
+    [ -n "${GITHUB_TOKEN:-}" ] || { echo "rabin: GITHUB_TOKEN missing in profile '$profile'" >&2; exit 1; }
+
+    write_env_file_from_loaded_profile "$profile"
+    write_timer_override "$profile"
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable "$(timer_name "$profile")"
+    sudo systemctl restart "$(timer_name "$profile")"
+
+    echo "rabin: enabled $(timer_name "$profile") for $GITHUB_REPO"
+}
+
+cmd_disable() {
+    require_install
+    local profile
+    profile="$(profile_arg_or_default "${1:-}")"
+    validate_profile_name "$profile"
+
+    sudo systemctl stop "$(timer_name "$profile")" || true
+    sudo systemctl disable "$(timer_name "$profile")" || true
+    sudo systemctl daemon-reload
+
+    echo "rabin: disabled $(timer_name "$profile")"
+}
+
+cmd_status() {
+    require_install
+    if [ "${1:-}" = "--all" ]; then
+        sudo systemctl list-timers --all 'pipeline-poller@*.timer' --no-pager
+        return 0
+    fi
+
+    local profile
+    profile="$(profile_arg_or_default "${1:-}")"
+    validate_profile_name "$profile"
+    sudo systemctl --no-pager status "$(timer_name "$profile")" "$(service_name "$profile")"
+}
+
+cmd_logs() {
+    require_install
+    local profile
+    profile="$(profile_arg_or_default "${1:-}")"
+    validate_profile_name "$profile"
+    sudo journalctl -u "$(service_name "$profile")" -u "$(timer_name "$profile")" -f
+}
+
+cmd_restart() {
+    require_install
+    local profile
+    profile="$(profile_arg_or_default "${1:-}")"
+    validate_profile_name "$profile"
+    sudo systemctl restart "$(timer_name "$profile")"
+}
+
+cmd_run_now() {
+    require_install
+
+    if [ "${1:-}" = "--all" ]; then
+        local services
+        services="$(systemctl list-unit-files 'pipeline-poller@*.service' --no-legend 2>/dev/null | awk '{print $1}')"
+        if [ -z "$services" ]; then
+            echo "rabin: no pipeline service instances found"
+            return 0
+        fi
+
+        while IFS= read -r service; do
+            [ -n "$service" ] || continue
+            sudo systemctl start "$service"
+            echo "rabin: started $service"
+        done <<< "$services"
+        return 0
+    fi
+
+    local profile
+    profile="$(profile_arg_or_default "${1:-}")"
+    validate_profile_name "$profile"
+    sudo systemctl start "$(service_name "$profile")"
+}
+
+cmd_uninstall() {
+    require_install
+
+    if [ "${1:-}" = "--all" ]; then
+        local timers
+        timers="$(systemctl list-unit-files 'pipeline-poller@*.timer' --no-legend 2>/dev/null | awk '{print $1}')"
+        if [ -n "$timers" ]; then
+            while IFS= read -r timer; do
+                [ -n "$timer" ] || continue
+                sudo systemctl stop "$timer" || true
+                sudo systemctl disable "$timer" || true
+            done <<< "$timers"
+        fi
+        sudo rm -f "$SYSTEM_PROJECT_DIR"/*.env 2>/dev/null || true
+        sudo rm -rf /etc/systemd/system/pipeline-poller@*.timer.d 2>/dev/null || true
+        sudo systemctl daemon-reload
+        sudo systemctl reset-failed
+        echo "rabin: removed all profile runtime env files and disabled all timers"
+        return 0
+    fi
+
+    local profile
+    profile="$(profile_arg_or_default "${1:-}")"
+    validate_profile_name "$profile"
+
+    sudo systemctl stop "$(timer_name "$profile")" || true
+    sudo systemctl disable "$(timer_name "$profile")" || true
+    sudo rm -f "$SYSTEM_PROJECT_DIR/${profile}.env"
+    sudo rm -rf "/etc/systemd/system/$(timer_name "$profile").d"
+    sudo systemctl daemon-reload
+    sudo systemctl reset-failed
+    echo "rabin: removed runtime files for profile '$profile'"
+}
+
+cmd="${1:---help}"
+if [ "$#" -gt 0 ]; then
+    shift
+fi
+
+case "$cmd" in
+    --help|-h|help)
+        usage
+        ;;
+    configure)
+        cmd_configure "$@"
+        ;;
+    profiles)
+        cmd_profiles
+        ;;
+    show)
+        cmd_show "$@"
+        ;;
+    enable)
+        cmd_enable "$@"
+        ;;
+    disable)
+        cmd_disable "$@"
+        ;;
+    status)
+        cmd_status "$@"
+        ;;
+    logs)
+        cmd_logs "$@"
+        ;;
+    restart)
+        cmd_restart "$@"
+        ;;
+    run-now)
+        cmd_run_now "$@"
+        ;;
+    urgent)
+        cmd_run_now "$@"
+        ;;
+    uninstall)
+        cmd_uninstall "$@"
+        ;;
+    *)
+        echo "rabin: unknown command '$cmd'" >&2
+        echo "rabin: run 'rabin --help' for usage" >&2
+        exit 2
+        ;;
+esac
