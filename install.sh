@@ -10,6 +10,8 @@ log()  { echo -e "${GREEN}[setup]${NC} $1"; }
 warn() { echo -e "${YELLOW}[warn]${NC} $1"; }
 fail() { echo -e "${RED}[error]${NC} $1"; exit 1; }
 
+START_TS="$(date +%s)"
+
 if [ -n "${BASH_SOURCE[0]:-}" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 else
@@ -159,4 +161,11 @@ echo "  Global CLI:"
 echo "    rabin --help   — show command help"
 echo "    rabin configure — auto-detect repo, create profile, enable timer"
 echo "    rabin urgent <profile> — trigger immediate poll"
+echo ""
+
+END_TS="$(date +%s)"
+ELAPSED_SEC=$((END_TS - START_TS))
+ELAPSED_MIN=$((ELAPSED_SEC / 60))
+ELAPSED_REM_SEC=$((ELAPSED_SEC % 60))
+echo "  Install time : ${ELAPSED_MIN}m ${ELAPSED_REM_SEC}s"
 echo ""
