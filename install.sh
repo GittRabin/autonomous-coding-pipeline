@@ -10,7 +10,12 @@ log()  { echo -e "${GREEN}[setup]${NC} $1"; }
 warn() { echo -e "${YELLOW}[warn]${NC} $1"; }
 fail() { echo -e "${RED}[error]${NC} $1"; exit 1; }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -n "${BASH_SOURCE[0]:-}" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+    # When piped via curl | bash, BASH_SOURCE can be unset.
+    SCRIPT_DIR="$PWD"
+fi
 INSTALL_REPO="${INSTALL_REPO:-GittRabin/autonomous-coding-pipeline}"
 INSTALL_REF="${INSTALL_REF:-main}"
 SOURCE_DIR="$SCRIPT_DIR"
