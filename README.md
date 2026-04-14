@@ -215,6 +215,7 @@ Use:
 ## Operational commands
 
 - `rabin status --all` — list all active pipeline timers
+- `rabin update` — update rabin CLI and rerun bootstrap installer
 - `rabin status <profile>` — inspect one profile service and timer
 - `rabin logs <profile>` — follow one profile logs
 - `rabin run-now <profile>` — force immediate poll for one profile

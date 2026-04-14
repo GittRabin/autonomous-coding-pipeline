@@ -17,6 +17,7 @@ Usage:
 
 Commands:
     configure    Create/update a project profile env file
+    update       Update rabin and rerun bootstrap installer
     profiles     List saved project profiles
     show         Show values from a saved profile
     enable       Enable a profile timer instance
@@ -35,6 +36,9 @@ Notes:
     - If profile is omitted for runtime commands, default is "default"
 
 Examples:
+    rabin update
+    rabin update --ref main
+    rabin update --cli-only
     rabin configure project-a --repo owner/repo-a
     rabin configure --plan-model-provider ollama
     rabin configure project-b --repo owner/repo-b
@@ -196,6 +200,75 @@ mask_value() {
     else
         echo "$MASK"
     fi
+}
+
+cmd_update() {
+    local update_repo="${INSTALL_REPO:-GittRabin/autonomous-coding-pipeline}"
+    local update_ref="${INSTALL_REF:-main}"
+    local cli_only=0
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --repo) update_repo="$2"; shift 2 ;;
+            --ref) update_ref="$2"; shift 2 ;;
+            --cli-only) cli_only=1; shift 1 ;;
+            --help|-h)
+                cat <<'EOF'
+Usage:
+    rabin update [options]
+
+Options:
+    --repo <owner/name>  Source repository (default: INSTALL_REPO or GittRabin/autonomous-coding-pipeline)
+    --ref <git-ref>      Branch/tag/sha (default: INSTALL_REF or main)
+    --cli-only           Update rabin CLI only, skip bootstrap installer
+
+Examples:
+    rabin update
+    rabin update --ref main
+    rabin update --repo yourname/autonomous-coding-pipeline --ref stable
+    rabin update --cli-only
+EOF
+                return 0
+                ;;
+            *)
+                echo "rabin: unknown update option: $1" >&2
+                return 2
+                ;;
+        esac
+    done
+
+    local tmp_dir source_dir
+    tmp_dir="$(mktemp -d)"
+    trap 'rm -rf "$tmp_dir"' RETURN
+
+    echo "rabin: downloading ${update_repo}@${update_ref}..."
+    if ! curl -fsSL "https://codeload.github.com/${update_repo}/tar.gz/${update_ref}" | tar -xz -C "$tmp_dir"; then
+        echo "rabin: failed to download source for ${update_repo}@${update_ref}" >&2
+        return 1
+    fi
+
+    source_dir="$(find "$tmp_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+    if [ -z "$source_dir" ] || [ ! -f "$source_dir/rabin" ]; then
+        echo "rabin: downloaded archive does not contain rabin script" >&2
+        return 1
+    fi
+
+    mkdir -p "$HOME/.local/bin"
+    install -m 0755 "$source_dir/rabin" "$HOME/.local/bin/rabin"
+    echo "rabin: updated CLI at $HOME/.local/bin/rabin"
+
+    if [ "$cli_only" -eq 1 ]; then
+        echo "rabin: cli-only update complete"
+        return 0
+    fi
+
+    if [ ! -f "$source_dir/install.sh" ]; then
+        echo "rabin: install.sh not found in downloaded source" >&2
+        return 1
+    fi
+
+    echo "rabin: running bootstrap installer from ${update_repo}@${update_ref}..."
+    INSTALL_REPO="$update_repo" INSTALL_REF="$update_ref" bash "$source_dir/install.sh"
 }
 
 cmd_configure() {
@@ -533,6 +606,9 @@ case "$cmd" in
         ;;
     configure)
         cmd_configure "$@"
+        ;;
+    update)
+        cmd_update "$@"
         ;;
     profiles)
         cmd_profiles
