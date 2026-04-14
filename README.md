@@ -82,6 +82,7 @@ Use [.env.example](.env.example) only if you want to pre-seed defaults. In norma
 - `AIDER_MODEL` — default `ollama/<OLLAMA_MODEL>`
 - `AIDER_EDITOR_MODEL` — optional separate editor model for Aider
 - `AIDER_ARCHITECT` — set `1` to enable Aider architect mode
+- Installer links `aider` to `~/.local/bin/aider` for direct shell use
 - `TARGET_BRANCH` — optional base branch to work against
 - `PIPELINE_BRANCH_MODE` — `issue-branch` (default) or `direct-target`
 - `SKIP_PR_CREATE` — `auto` (default), `true`, or `false`
@@ -174,6 +175,7 @@ cd /home/ubuntu/projects/repo-b && rabin configure
 ```
 
 `rabin configure` reuses your existing `gh` login by default (`gh auth token`) when `--github-token` is not provided.
+It also initializes required pipeline labels by default (`overnight-task`, `processing`, `task-code`, `task-e2e`, `ready-for-review`, `needs-human-review`).
 
 Shortcut for current checked-out branch (direct commits, no PR by default):
 

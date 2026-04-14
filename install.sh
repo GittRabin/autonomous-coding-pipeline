@@ -133,6 +133,15 @@ pip install aider-chat -q
 
 aider --version || fail "aider install failed"
 
+log "Linking aider into user bin..."
+mkdir -p "$HOME/.local/bin"
+ln -sf "$VENV_DIR/bin/aider" "$HOME/.local/bin/aider"
+
+if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+    warn "~/.local/bin is not on PATH in this shell. Add this to ~/.bashrc:"
+    warn "  export PATH=\"$HOME/.local/bin:$PATH\""
+fi
+
 log "Installing pipeline files to $WORK_DIR..."
 mkdir -p "$WORK_DIR"
 

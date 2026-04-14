@@ -74,6 +74,8 @@ Options:
     --target-branch <name>      Target base branch (default: repo default branch)
     --branch-mode <name>        issue-branch|direct-target (default: issue-branch)
     --skip-pr-create <name>     auto|true|false (default: auto)
+    --init-labels               Ensure required labels exist in target repo (default)
+    --no-init-labels            Skip label initialization
     --enable                    Enable/start timer for profile after saving (default)
     --no-enable                 Save profile only, do not enable timer
     --poll-interval <minutes>   Poll interval (default: 5)
@@ -150,6 +152,33 @@ validate_profile_name() {
         echo "rabin: allowed characters are letters, numbers, dot, underscore, dash" >&2
         exit 1
     }
+}
+
+init_repo_labels() {
+    local repo="$1"
+    local trigger_label="$2"
+    local processing_label="$3"
+    local task_label_code="$4"
+    local task_label_e2e="$5"
+
+    if ! command -v gh >/dev/null 2>&1; then
+        echo "rabin: gh CLI not found; cannot initialize labels" >&2
+        return 1
+    fi
+
+    ensure_label() {
+        local name="$1"
+        local color="$2"
+        local desc="$3"
+        gh label create "$name" --repo "$repo" --color "$color" --description "$desc" >/dev/null 2>&1 || true
+    }
+
+    ensure_label "$trigger_label" "FBCA04" "Queued for pipeline"
+    ensure_label "$processing_label" "0052CC" "Currently being processed"
+    ensure_label "$task_label_code" "0E8A16" "Code-change route"
+    ensure_label "$task_label_e2e" "5319E7" "E2E/custom runner route"
+    ensure_label "ready-for-review" "1D76DB" "Pipeline completed and ready"
+    ensure_label "needs-human-review" "D93F0B" "Pipeline completed with follow-up needed"
 }
 
 write_env_file_from_loaded_profile() {
@@ -308,6 +337,7 @@ cmd_configure() {
     local target_branch="${TARGET_BRANCH:-}"
     local pipeline_branch_mode="${PIPELINE_BRANCH_MODE:-issue-branch}"
     local skip_pr_create="${SKIP_PR_CREATE:-auto}"
+    local init_labels=1
     local use_current_branch=0
     local branch_mode_explicit=0
     local skip_pr_explicit=0
@@ -336,6 +366,8 @@ cmd_configure() {
             --target-branch) target_branch="$2"; shift 2 ;;
             --branch-mode) pipeline_branch_mode="$2"; branch_mode_explicit=1; shift 2 ;;
             --skip-pr-create) skip_pr_create="$2"; skip_pr_explicit=1; shift 2 ;;
+            --init-labels) init_labels=1; shift 1 ;;
+            --no-init-labels) init_labels=0; shift 1 ;;
             --enable) auto_enable=1; shift 1 ;;
             --no-enable) auto_enable=0; shift 1 ;;
             --poll-interval) poll_interval="$2"; shift 2 ;;
@@ -465,6 +497,13 @@ TASK_LABEL_E2E=$task_label_e2e
 E2E_RUNNER_CMD=$e2e_runner_cmd
 EOF
     chmod 600 "$file"
+
+    if [ "$init_labels" -eq 1 ]; then
+        echo "rabin: ensuring required labels exist in $repo..."
+        if ! init_repo_labels "$repo" "$trigger_label" "$processing_label" "$task_label_code" "$task_label_e2e"; then
+            echo "rabin: warning: label initialization failed; continue manually if needed" >&2
+        fi
+    fi
 
     echo "rabin: profile saved: $profile"
     echo "rabin: file: $file"
