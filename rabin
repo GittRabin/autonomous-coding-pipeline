@@ -68,7 +68,7 @@ Options:
     --venv-dir <path>           Python venv path (default: $HOME/.venv/pipeline)
     --ollama-model <name>       Local editor model (default: deepseek-coder-v2:16b-lite-instruct-q4_K_M)
     --ollama-planner-model <name>  Local planner model (default: ollama-model)
-    --plan-model-provider <name>    Plan backend: auto|ollama|anthropic|claude-cli
+    --plan-model-provider <name>    Plan backend: auto|ollama|anthropic|claude
     --aider-model <name>        Aider model (default: ollama/<ollama-model>)
     --aider-editor-model <name> Optional Aider editor model
     --aider-architect <0|1>     Enable Aider architect mode (default: 0)
@@ -563,8 +563,12 @@ cmd_configure() {
         exit 1
     }
 
-    [[ "$plan_model_provider" =~ ^(auto|ollama|anthropic|claude-cli)$ ]] || {
-        echo "rabin: --plan-model-provider must be one of: auto, ollama, anthropic, claude-cli" >&2
+    if [ "$plan_model_provider" = "claude-cli" ]; then
+        plan_model_provider="claude"
+    fi
+
+    [[ "$plan_model_provider" =~ ^(auto|ollama|anthropic|claude)$ ]] || {
+        echo "rabin: --plan-model-provider must be one of: auto, ollama, anthropic, claude" >&2
         exit 1
     }
 

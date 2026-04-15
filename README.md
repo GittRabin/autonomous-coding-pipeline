@@ -45,7 +45,8 @@ The VM only makes outbound requests to GitHub and model providers.
 - [install.sh](install.sh) — installs dependencies, the poller, and the systemd timer
 - [setup.sh](setup.sh) — compatibility wrapper that delegates to install.sh
 - [poller/poller.js](poller/poller.js) — outbound GitHub poller that claims work by label
-- [pipeline/run_pipeline.sh](pipeline/run_pipeline.sh) — branch, planning, tool execution, testing, and PR creation
+- [pipeline/run_pipeline.sh](pipeline/run_pipeline.sh) — small entrypoint that coordinates the full pipeline flow
+- [pipeline/lib](pipeline/lib) — readable helper scripts for planning, execution, repo prep, and publishing
 - [systemd/pipeline-poller.service.template](systemd/pipeline-poller.service.template) — oneshot service run by the timer
 - [systemd/pipeline-poller.timer.template](systemd/pipeline-poller.timer.template) — recurring scheduler
 - [Makefile](Makefile) — daily operational commands
@@ -81,7 +82,7 @@ Use [.env.example](.env.example) only if you want to pre-seed defaults. In norma
 - `VENV_DIR` — Python virtual environment path
 - `POLL_INTERVAL_MINUTES` — timer frequency, default `5`
 - `OLLAMA_PLANNER_MODEL` — planner model for local plan generation
-- `PLAN_MODEL_PROVIDER` — `auto`, `ollama`, `anthropic`, or `claude-cli`
+- `PLAN_MODEL_PROVIDER` — `auto`, `ollama`, `anthropic`, or `claude`
 - `AIDER_MODEL` — default `ollama/<OLLAMA_MODEL>`
 - `AIDER_EDITOR_MODEL` — optional separate editor model for Aider
 - `AIDER_ARCHITECT` — set `1` to enable Aider architect mode
