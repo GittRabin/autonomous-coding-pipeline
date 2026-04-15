@@ -96,10 +96,10 @@ generate_plan() {
     local prompt=""
 
     prompt="$(build_plan_prompt)"
-    PLAN="$(generate_plan_with_anthropic "$prompt")"
+    PLAN="$(generate_plan_with_claude "$prompt")"
 
     if [[ -z "$PLAN" ]]; then
-        PLAN="$(generate_plan_with_claude "$prompt")"
+        PLAN="$(generate_plan_with_anthropic "$prompt")"
     fi
 
     if [[ -z "$PLAN" ]]; then

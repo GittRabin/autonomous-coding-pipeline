@@ -82,7 +82,7 @@ Use [.env.example](.env.example) only if you want to pre-seed defaults. In norma
 - `VENV_DIR` — Python virtual environment path
 - `POLL_INTERVAL_MINUTES` — timer frequency, default `5`
 - `OLLAMA_PLANNER_MODEL` — planner model for local plan generation
-- `PLAN_MODEL_PROVIDER` — `auto`, `ollama`, `anthropic`, or `claude`
+- `PLAN_MODEL_PROVIDER` — `auto`, `ollama`, `anthropic`, or `claude` (`auto` now prefers Claude terminal first, then Anthropic API, then Ollama)
 - `AIDER_MODEL` — default `ollama/<OLLAMA_MODEL>`
 - `AIDER_EDITOR_MODEL` — optional separate editor model for Aider
 - `AIDER_ARCHITECT` — set `1` to enable Aider architect mode
