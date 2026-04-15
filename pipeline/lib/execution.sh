@@ -124,6 +124,8 @@ run_tests() {
 }
 
 execute_pipeline_run() {
+    local snapshot_status="tool-failed"
+
     SUCCESS=false
     TEST_PASSED=false
     TEST_STATUS="not-run"
@@ -132,11 +134,19 @@ execute_pipeline_run() {
 
     if run_selected_tool; then
         SUCCESS=true
+        snapshot_status="completed"
     else
         log "Selected tool failed"
     fi
 
     if [ "$SUCCESS" = true ]; then
         run_tests
+        if [ "$TEST_PASSED" != true ]; then
+            snapshot_status="$TEST_STATUS"
+        fi
+    fi
+
+    if declare -F persist_issue_state_snapshot >/dev/null 2>&1; then
+        persist_issue_state_snapshot "$snapshot_status"
     fi
 }

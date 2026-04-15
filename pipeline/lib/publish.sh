@@ -3,7 +3,16 @@
 # Commit, push, and PR helpers.
 
 commit_and_push_changes() {
+    if declare -F protect_pipeline_artifacts_from_git >/dev/null 2>&1; then
+        protect_pipeline_artifacts_from_git
+    fi
+
     git add -A
+
+    if declare -F protect_pipeline_artifacts_from_git >/dev/null 2>&1; then
+        protect_pipeline_artifacts_from_git
+    fi
+
     git commit -m "feat: implement issue #$ISSUE_NUMBER - $ISSUE_TITLE" || true
     git push origin "$BRANCH"
 }

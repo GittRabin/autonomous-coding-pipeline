@@ -112,4 +112,8 @@ generate_plan() {
     fi
 
     echo "$PLAN" > "$PLAN_FILE"
+
+    if declare -F persist_issue_state_snapshot >/dev/null 2>&1; then
+        persist_issue_state_snapshot "planned"
+    fi
 }

@@ -59,13 +59,61 @@ ensure_local_git_exclude() {
     fi
 }
 
+repo_relative_path_if_inside() {
+    local target_path="$1"
+
+    [ -n "$target_path" ] || return 0
+
+    case "$target_path" in
+        "$REPO_PATH"/*)
+            printf '%s\n' "${target_path#"$REPO_PATH"/}"
+            ;;
+    esac
+}
+
+protect_pipeline_artifacts_from_git() {
+    local tracked_paths=()
+    local relative_path=""
+    local legacy_artifacts=(
+        "PLAN.md"
+        "plan.md"
+        "TEST_OUTPUT.txt"
+        "test_output.txt"
+    )
+
+    relative_path="$(repo_relative_path_if_inside "$PIPELINE_STATE_DIR")"
+    if [ -n "$relative_path" ]; then
+        ensure_local_git_exclude "$relative_path/"
+        tracked_paths+=("$relative_path")
+    fi
+
+    relative_path="$(repo_relative_path_if_inside "${AIDER_TRACE_DIR:-}")"
+    if [ -n "$relative_path" ]; then
+        ensure_local_git_exclude "$relative_path/"
+        tracked_paths+=("$relative_path")
+    fi
+
+    for relative_path in "${legacy_artifacts[@]}"; do
+        ensure_local_git_exclude "$relative_path"
+        tracked_paths+=("$relative_path")
+    done
+
+    if [ "${#tracked_paths[@]}" -gt 0 ]; then
+        git rm -r --cached --ignore-unmatch -- "${tracked_paths[@]}" >/dev/null 2>&1 || true
+    fi
+}
+
 setup_run_state() {
+    if declare -F initialize_project_state_defaults >/dev/null 2>&1; then
+        initialize_project_state_defaults
+    fi
+
     if [ -z "$PIPELINE_STATE_DIR" ]; then
         PIPELINE_STATE_DIR="$REPO_PATH/$PIPELINE_REPO_STATE_SUBDIR"
     fi
 
-    if [ -z "$AIDER_TRACE_DIR" ]; then
-        AIDER_TRACE_DIR="$PIPELINE_STATE_DIR"
+    if [ -z "$AIDER_TRACE_DIR" ] && is_truthy "${AIDER_TRACE:-false}"; then
+        AIDER_TRACE_DIR="${PIPELINE_STATE_ROOT:-$PIPELINE_STATE_DIR}/traces"
     fi
 
     mkdir -p "$PIPELINE_STATE_DIR"
@@ -75,10 +123,7 @@ setup_run_state() {
     PLAN_FILE="$ISSUE_STATE_DIR/${RUN_ID}.plan.md"
     TEST_OUTPUT_FILE="$ISSUE_STATE_DIR/${RUN_ID}.test_output.txt"
 
-    if [[ "$PIPELINE_STATE_DIR" == "$REPO_PATH"/* ]]; then
-        local local_state_rel="${PIPELINE_STATE_DIR#"$REPO_PATH"/}"
-        ensure_local_git_exclude "$local_state_rel/"
-    fi
+    protect_pipeline_artifacts_from_git
 
     log "Run state dir: $PIPELINE_STATE_DIR"
     log "Issue state dir: $ISSUE_STATE_DIR"

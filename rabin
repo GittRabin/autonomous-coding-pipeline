@@ -73,6 +73,8 @@ Options:
     --aider-editor-model <name> Optional Aider editor model
     --aider-architect <0|1>     Enable Aider architect mode (default: 0)
     --target-branch <name>      Target base branch (default: repo default branch)
+    --state-dir <path>          Optional local history folder override
+    --state-db-path <path>      Optional sqlite issue history database path override
     --branch-mode <name>        issue-branch|direct-target (default: issue-branch)
     --skip-pr-create <name>     auto|true|false (default: auto)
     --init-labels               Ensure required labels exist in target repo (default)
@@ -168,13 +170,18 @@ PLAN_MODEL_PROVIDER=${PLAN_MODEL_PROVIDER:-auto}
 AIDER_MODEL=${AIDER_MODEL:-ollama/${OLLAMA_MODEL:-deepseek-coder-v2:16b-lite-instruct-q4_K_M}}
 AIDER_EDITOR_MODEL=${AIDER_EDITOR_MODEL:-}
 AIDER_ARCHITECT=${AIDER_ARCHITECT:-0}
+AIDER_TRACE=${AIDER_TRACE:-false}
+AIDER_TRACE_DIR=${AIDER_TRACE_DIR:-}
 TARGET_BRANCH=${TARGET_BRANCH:-}
 PIPELINE_BRANCH_MODE=${PIPELINE_BRANCH_MODE:-issue-branch}
 SKIP_PR_CREATE=${SKIP_PR_CREATE:-auto}
 REPO_PATH_OVERRIDE=$repo_path_override
+PROJECT_NAME=${PROJECT_NAME:-$profile}
 WORK_DIR=${WORK_DIR:-$HOME/pipeline}
 REPO_DIR=${REPO_DIR:-$HOME/projects}
 VENV_DIR=${VENV_DIR:-$HOME/.venv/pipeline}
+PIPELINE_STATE_DIR=${PIPELINE_STATE_DIR:-}
+PIPELINE_DB_PATH=${PIPELINE_DB_PATH:-}
 POLL_INTERVAL_MINUTES=${POLL_INTERVAL_MINUTES:-5}
 TRIGGER_LABEL=${TRIGGER_LABEL:-overnight-task}
 PROCESSING_LABEL=${PROCESSING_LABEL:-processing}
@@ -305,11 +312,16 @@ PLAN_MODEL_PROVIDER=${PLAN_MODEL_PROVIDER:-auto}
 AIDER_MODEL=${AIDER_MODEL:-ollama/$OLLAMA_MODEL}
 AIDER_EDITOR_MODEL=${AIDER_EDITOR_MODEL:-}
 AIDER_ARCHITECT=${AIDER_ARCHITECT:-0}
+AIDER_TRACE=${AIDER_TRACE:-false}
+AIDER_TRACE_DIR=${AIDER_TRACE_DIR:-}
 TARGET_BRANCH=${TARGET_BRANCH:-}
 PIPELINE_BRANCH_MODE=${PIPELINE_BRANCH_MODE:-issue-branch}
 SKIP_PR_CREATE=${SKIP_PR_CREATE:-auto}
 REPO_PATH_OVERRIDE=${REPO_PATH_OVERRIDE:-}
+PROJECT_NAME=${PROJECT_NAME:-$profile}
 VENV_DIR=${VENV_DIR:-$HOME/.venv/pipeline}
+PIPELINE_STATE_DIR=${PIPELINE_STATE_DIR:-}
+PIPELINE_DB_PATH=${PIPELINE_DB_PATH:-}
 TRIGGER_LABEL=${TRIGGER_LABEL:-overnight-task}
 PROCESSING_LABEL=${PROCESSING_LABEL:-processing}
 TASK_LABEL_CODE=${TASK_LABEL_CODE:-task-code}
@@ -443,10 +455,15 @@ cmd_configure() {
     local aider_model="${AIDER_MODEL:-ollama/$ollama_model}"
     local aider_editor_model="${AIDER_EDITOR_MODEL:-}"
     local aider_architect="${AIDER_ARCHITECT:-0}"
+    local aider_trace="${AIDER_TRACE:-false}"
+    local aider_trace_dir="${AIDER_TRACE_DIR:-}"
     local target_branch="${TARGET_BRANCH:-}"
     local pipeline_branch_mode="${PIPELINE_BRANCH_MODE:-issue-branch}"
     local skip_pr_create="${SKIP_PR_CREATE:-auto}"
     local repo_path_override="${REPO_PATH_OVERRIDE:-}"
+    local project_name="${PROJECT_NAME:-}"
+    local pipeline_state_dir="${PIPELINE_STATE_DIR:-}"
+    local pipeline_db_path="${PIPELINE_DB_PATH:-}"
     local init_labels=1
     local use_current_branch=0
     local branch_mode_explicit=0
@@ -473,6 +490,8 @@ cmd_configure() {
             --aider-model) aider_model="$2"; shift 2 ;;
             --aider-editor-model) aider_editor_model="$2"; shift 2 ;;
             --aider-architect) aider_architect="$2"; shift 2 ;;
+            --state-dir) pipeline_state_dir="$2"; shift 2 ;;
+            --state-db-path) pipeline_db_path="$2"; shift 2 ;;
             --target-branch) target_branch="$2"; shift 2 ;;
             --branch-mode) pipeline_branch_mode="$2"; branch_mode_explicit=1; shift 2 ;;
             --skip-pr-create) skip_pr_create="$2"; skip_pr_explicit=1; shift 2 ;;
@@ -547,6 +566,10 @@ cmd_configure() {
         profile="$(basename "$PWD")"
     fi
 
+    if [ -z "$project_name" ]; then
+        project_name="$profile"
+    fi
+
     if [ -z "$github_token" ]; then
         if command -v gh >/dev/null 2>&1; then
             github_token="$(gh auth token 2>/dev/null || true)"
@@ -601,13 +624,18 @@ PLAN_MODEL_PROVIDER=$plan_model_provider
 AIDER_MODEL=$aider_model
 AIDER_EDITOR_MODEL=$aider_editor_model
 AIDER_ARCHITECT=$aider_architect
+AIDER_TRACE=$aider_trace
+AIDER_TRACE_DIR=$aider_trace_dir
 TARGET_BRANCH=$target_branch
 PIPELINE_BRANCH_MODE=$pipeline_branch_mode
 SKIP_PR_CREATE=$skip_pr_create
 REPO_PATH_OVERRIDE=$repo_path_override
+PROJECT_NAME=$project_name
 WORK_DIR=$work_dir
 REPO_DIR=$repo_dir
 VENV_DIR=$venv_dir
+PIPELINE_STATE_DIR=$pipeline_state_dir
+PIPELINE_DB_PATH=$pipeline_db_path
 POLL_INTERVAL_MINUTES=$poll_interval
 TRIGGER_LABEL=$trigger_label
 PROCESSING_LABEL=$processing_label
@@ -673,10 +701,15 @@ cmd_show() {
     echo "AIDER_MODEL=${AIDER_MODEL:-}"
     echo "AIDER_EDITOR_MODEL=${AIDER_EDITOR_MODEL:-}"
     echo "AIDER_ARCHITECT=${AIDER_ARCHITECT:-}"
+    echo "AIDER_TRACE=${AIDER_TRACE:-}"
+    echo "AIDER_TRACE_DIR=${AIDER_TRACE_DIR:-}"
     echo "TARGET_BRANCH=${TARGET_BRANCH:-}"
     echo "PIPELINE_BRANCH_MODE=${PIPELINE_BRANCH_MODE:-}"
     echo "SKIP_PR_CREATE=${SKIP_PR_CREATE:-}"
     echo "REPO_PATH_OVERRIDE=${REPO_PATH_OVERRIDE:-}"
+    echo "PROJECT_NAME=${PROJECT_NAME:-}"
+    echo "PIPELINE_STATE_DIR=${PIPELINE_STATE_DIR:-}"
+    echo "PIPELINE_DB_PATH=${PIPELINE_DB_PATH:-}"
     echo "POLL_INTERVAL_MINUTES=${POLL_INTERVAL_MINUTES:-}"
     echo "TRIGGER_LABEL=${TRIGGER_LABEL:-}"
     echo "PROCESSING_LABEL=${PROCESSING_LABEL:-}"
