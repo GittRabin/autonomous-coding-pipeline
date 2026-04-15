@@ -35,8 +35,9 @@ if [ ! -d "$SCRIPT_DIR/poller" ] || [ ! -d "$SCRIPT_DIR/pipeline" ] || [ ! -d "$
     [ -n "$SOURCE_DIR" ] || fail "Failed to download installer source for ${INSTALL_REPO}@${INSTALL_REF}"
 fi
 
-OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5-coder:1.5b}"
+OLLAMA_MODEL="${OLLAMA_MODEL:-deepseek-coder-v2:16b-lite-instruct-q4_K_M}"
 WORK_DIR="${WORK_DIR:-$HOME/pipeline}"
+REPO_DIR="${REPO_DIR:-$HOME/projects}"
 VENV_DIR="${VENV_DIR:-$HOME/.venv/pipeline}"
 POLL_INTERVAL_MINUTES="${POLL_INTERVAL_MINUTES:-5}"
 
@@ -192,6 +193,37 @@ sudo mv /tmp/pipeline-poller@.service /etc/systemd/system/pipeline-poller@.servi
 sudo mv /tmp/pipeline-poller@.timer /etc/systemd/system/pipeline-poller@.timer
 sudo systemctl daemon-reload
 
+auto_enable_default_profile() {
+    local auto_repo="${GITHUB_REPO:-}"
+    local auto_token="${GITHUB_TOKEN:-}"
+
+    if [ -z "$auto_repo" ] && command -v gh >/dev/null 2>&1; then
+        auto_repo="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"
+    fi
+
+    if [ -z "$auto_repo" ] && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        remote_url="$(git config --get remote.origin.url 2>/dev/null || true)"
+        auto_repo="$(echo "$remote_url" | sed -E 's#^git@github.com:##; s#^https://github.com/##; s#\.git$##')"
+    fi
+
+    if [ -z "$auto_token" ] && command -v gh >/dev/null 2>&1; then
+        auto_token="$(gh auth token 2>/dev/null || true)"
+    fi
+
+    if [ -n "$auto_repo" ] && [ -n "$auto_token" ]; then
+        log "Auto-enabling default rabin profile for $auto_repo..."
+        if GITHUB_REPO="$auto_repo" GITHUB_TOKEN="$auto_token" WORK_DIR="$WORK_DIR" REPO_DIR="$REPO_DIR" VENV_DIR="$VENV_DIR" OLLAMA_MODEL="$OLLAMA_MODEL" POLL_INTERVAL_MINUTES="$POLL_INTERVAL_MINUTES" rabin enable default; then
+            log "Default profile enabled"
+        else
+            warn "Automatic timer enable failed. You can run 'rabin enable default' later."
+        fi
+    else
+        warn "Skipping automatic timer enable because repo or GitHub auth is unavailable. Run 'rabin enable default' later, or use 'rabin configure' for custom profiles."
+    fi
+}
+
+auto_enable_default_profile
+
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN} Bootstrap complete${NC}"
@@ -202,14 +234,14 @@ echo "  Install dir  : $WORK_DIR"
 echo "  Timer default: ${POLL_INTERVAL_MINUTES} minutes"
 echo ""
 echo "  Next steps:"
-echo "    1) Authenticate GitHub CLI (once):"
+echo "    1) Authenticate GitHub CLI (once, if needed):"
 echo "       gh auth login"
 echo ""
-echo "    2) In each target repository directory, run:"
-echo "       rabin configure"
-echo ""
-echo "    3) Verify all active profiles:"
+echo "    2) Verify active profiles:"
 echo "       rabin status --all"
+echo ""
+echo "    3) Optional: for multi-project or custom setup:"
+echo "       rabin configure"
 echo ""
 echo "  Global CLI:"
 echo "    rabin --help   — show command help"

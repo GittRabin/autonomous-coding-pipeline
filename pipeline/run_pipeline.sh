@@ -11,20 +11,21 @@ ISSUE_TITLE="$2"
 ISSUE_BODY="${3:-}"
 TOOL_MODE="${4:-${TOOL_MODE:-task-code}}"
 
-REPO_DIR="${REPO_DIR:-$HOME/repos}"
+REPO_DIR="${REPO_DIR:-$HOME/projects}"
 REPO_PATH_OVERRIDE="${REPO_PATH_OVERRIDE:-}"
 GITHUB_REPO="${GITHUB_REPO:-}"
 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
-OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5-coder:1.5b}"
+DEFAULT_OLLAMA_MODEL="deepseek-coder-v2:16b-lite-instruct-q4_K_M"
+OLLAMA_MODEL="${OLLAMA_MODEL:-$DEFAULT_OLLAMA_MODEL}"
 OLLAMA_PLANNER_MODEL="${OLLAMA_PLANNER_MODEL:-$OLLAMA_MODEL}"
 OLLAMA_AUTO_PULL="${OLLAMA_AUTO_PULL:-true}"
-OLLAMA_FALLBACK_MODEL="${OLLAMA_FALLBACK_MODEL:-qwen2.5-coder:1.5b}"
+OLLAMA_FALLBACK_MODEL="${OLLAMA_FALLBACK_MODEL:-$DEFAULT_OLLAMA_MODEL}"
 PLAN_MODEL_PROVIDER="${PLAN_MODEL_PROVIDER:-auto}"
 AIDER_MODEL="${AIDER_MODEL:-ollama/$OLLAMA_MODEL}"
 AIDER_EDITOR_MODEL="${AIDER_EDITOR_MODEL:-}"
 AIDER_ARCHITECT="${AIDER_ARCHITECT:-0}"
 AIDER_TRACE="${AIDER_TRACE:-true}"
-AIDER_TRACE_DIR="${AIDER_TRACE_DIR:-$HOME/.local/state/rabin}"
+AIDER_TRACE_DIR="${AIDER_TRACE_DIR:-}"
 OLLAMA_API_BASE="${OLLAMA_API_BASE:-http://127.0.0.1:11434}"
 GIT_COMMIT_NAME="${GIT_COMMIT_NAME:-Rabin Pipeline Bot}"
 GIT_COMMIT_EMAIL="${GIT_COMMIT_EMAIL:-rabin-pipeline-bot@users.noreply.github.com}"
@@ -33,9 +34,14 @@ PIPELINE_BRANCH_MODE="${PIPELINE_BRANCH_MODE:-issue-branch}"
 SKIP_PR_CREATE="${SKIP_PR_CREATE:-auto}"
 VENV_DIR="${VENV_DIR:-$HOME/.venv/pipeline}"
 E2E_RUNNER_CMD="${E2E_RUNNER_CMD:-}"
+PIPELINE_STATE_DIR="${PIPELINE_STATE_DIR:-}"
+PIPELINE_REPO_STATE_SUBDIR="${PIPELINE_REPO_STATE_SUBDIR:-.rabin/history}"
 MAX_RETRIES=3
 DEFAULT_BRANCH="main"
 BASE_BRANCH=""
+PLAN_FILE=""
+TEST_OUTPUT_FILE=""
+ISSUE_STATE_DIR=""
 
 log()  { echo "[pipeline #$ISSUE_NUMBER] $(date '+%H:%M:%S') $1"; }
 fail() { echo "[pipeline #$ISSUE_NUMBER] $(date '+%H:%M:%S') FAILED: $1"; exit 1; }
@@ -48,6 +54,10 @@ REPO_PATH="${REPO_PATH_OVERRIDE:-$REPO_DIR/$REPO_SLUG}"
 
 [[ "$PIPELINE_BRANCH_MODE" =~ ^(issue-branch|direct-target)$ ]] || fail "PIPELINE_BRANCH_MODE must be issue-branch or direct-target"
 [[ "$SKIP_PR_CREATE" =~ ^(auto|true|false)$ ]] || fail "SKIP_PR_CREATE must be auto, true, or false"
+
+# ----------------------------------------------------------------------------
+# Shared helpers
+# ----------------------------------------------------------------------------
 
 is_truthy() {
     local v
@@ -170,9 +180,28 @@ prepare_repo() {
     fi
 }
 
-generate_plan() {
-    local prompt
-    prompt="You are a senior engineer. Decompose this task into a precise, ordered list of coding steps with acceptance criteria. Be specific about file paths and function names where possible.
+ensure_local_git_exclude() {
+    local relative_path="$1"
+    local exclude_file
+
+    [ -n "$relative_path" ] || return 0
+
+    exclude_file="$(git rev-parse --git-path info/exclude)"
+    touch "$exclude_file"
+
+    if ! grep -Fxq "$relative_path" "$exclude_file"; then
+        echo "$relative_path" >> "$exclude_file"
+        log "Added local git exclude: $relative_path"
+    fi
+}
+
+# ----------------------------------------------------------------------------
+# Planning helpers
+# ----------------------------------------------------------------------------
+
+build_plan_prompt() {
+    cat <<EOF
+You are a senior engineer. Decompose this task into a precise, ordered list of coding steps with acceptance criteria. Be specific about file paths and function names where possible.
 
 Preferred execution route: $TOOL_MODE
 
@@ -181,44 +210,67 @@ Task title: $ISSUE_TITLE
 Task details:
 $ISSUE_BODY
 
-Output only the plan in markdown, no preamble."
+Output only the plan in markdown, no preamble.
+EOF
+}
 
-    PLAN=""
+generate_plan_with_anthropic() {
+    local prompt="$1"
+    local prompt_body=""
 
-    if [[ "$PLAN_MODEL_PROVIDER" == "anthropic" ]] || { [[ "$PLAN_MODEL_PROVIDER" == "auto" ]] && [[ -n "$ANTHROPIC_API_KEY" ]]; }; then
-        log "Generating PLAN.md via Anthropic..."
-        PROMPT_BODY=$(jq -n \
-            --arg text "$prompt" \
-            '{
-                model: "claude-sonnet-4-5",
-                max_tokens: 2048,
-                messages: [{ role: "user", content: $text }]
-            }')
-
-        PLAN=$(curl -s https://api.anthropic.com/v1/messages \
-            -H "x-api-key: $ANTHROPIC_API_KEY" \
-            -H "anthropic-version: 2023-06-01" \
-            -H "content-type: application/json" \
-            -d "$PROMPT_BODY" | jq -r '.content[0].text // empty')
+    if [[ "$PLAN_MODEL_PROVIDER" != "anthropic" ]] && { [[ "$PLAN_MODEL_PROVIDER" != "auto" ]] || [[ -z "$ANTHROPIC_API_KEY" ]]; }; then
+        return 0
     fi
 
-    if [[ -z "$PLAN" ]] && { [[ "$PLAN_MODEL_PROVIDER" == "claude-cli" ]] || [[ "$PLAN_MODEL_PROVIDER" == "auto" ]]; }; then
-        if command -v claude >/dev/null 2>&1; then
-            log "Generating PLAN.md via Claude Code CLI..."
-            PLAN=$(claude -p "$prompt" 2>/dev/null || true)
-        fi
+    log "Generating PLAN.md via Anthropic..." >&2
+    prompt_body=$(jq -n \
+        --arg text "$prompt" \
+        '{
+            model: "claude-sonnet-4-5",
+            max_tokens: 2048,
+            messages: [{ role: "user", content: $text }]
+        }')
+
+    curl -s https://api.anthropic.com/v1/messages \
+        -H "x-api-key: $ANTHROPIC_API_KEY" \
+        -H "anthropic-version: 2023-06-01" \
+        -H "content-type: application/json" \
+        -d "$prompt_body" | jq -r '.content[0].text // empty'
+}
+
+generate_plan_with_claude_cli() {
+    local prompt="$1"
+
+    if [[ "$PLAN_MODEL_PROVIDER" != "claude-cli" && "$PLAN_MODEL_PROVIDER" != "auto" ]]; then
+        return 0
     fi
 
-    if [[ -z "$PLAN" ]] && { [[ "$PLAN_MODEL_PROVIDER" == "ollama" ]] || [[ "$PLAN_MODEL_PROVIDER" == "auto" ]]; }; then
-        if command -v ollama >/dev/null 2>&1; then
-            log "Generating PLAN.md via Ollama model $OLLAMA_PLANNER_MODEL..."
-            PLAN=$(ollama run "$OLLAMA_PLANNER_MODEL" "$prompt" 2>/dev/null || true)
-        fi
+    if ! command -v claude >/dev/null 2>&1; then
+        return 0
     fi
 
-    if [[ -z "$PLAN" ]]; then
-        log "Planner model unavailable, writing fallback PLAN.md template"
-        PLAN="# Plan for issue #$ISSUE_NUMBER
+    log "Generating PLAN.md via Claude Code CLI..." >&2
+    claude -p "$prompt" 2>/dev/null || true
+}
+
+generate_plan_with_ollama() {
+    local prompt="$1"
+
+    if [[ "$PLAN_MODEL_PROVIDER" != "ollama" && "$PLAN_MODEL_PROVIDER" != "auto" ]]; then
+        return 0
+    fi
+
+    if ! command -v ollama >/dev/null 2>&1; then
+        return 0
+    fi
+
+    log "Generating PLAN.md via Ollama model $OLLAMA_PLANNER_MODEL..." >&2
+    ollama run "$OLLAMA_PLANNER_MODEL" "$prompt" 2>/dev/null || true
+}
+
+write_fallback_plan() {
+    cat <<EOF
+# Plan for issue #$ISSUE_NUMBER
 
 ## Context
 - Route: $TOOL_MODE
@@ -234,13 +286,34 @@ Output only the plan in markdown, no preamble."
 - Requested behavior is implemented.
 - Existing tests pass, or failures are documented.
 - PR includes clear change summary and test status.
-"
+EOF
+}
+
+generate_plan() {
+    local prompt=""
+
+    prompt="$(build_plan_prompt)"
+    PLAN="$(generate_plan_with_anthropic "$prompt")"
+
+    if [[ -z "$PLAN" ]]; then
+        PLAN="$(generate_plan_with_claude_cli "$prompt")"
     fi
 
-    echo "$PLAN" > PLAN.md
-    git add PLAN.md
-    git commit -m "chore: add PLAN.md for issue #$ISSUE_NUMBER" || true
+    if [[ -z "$PLAN" ]]; then
+        PLAN="$(generate_plan_with_ollama "$prompt")"
+    fi
+
+    if [[ -z "$PLAN" ]]; then
+        log "Planner model unavailable, writing fallback PLAN.md template"
+        PLAN="$(write_fallback_plan)"
+    fi
+
+    echo "$PLAN" > "$PLAN_FILE"
 }
+
+# ----------------------------------------------------------------------------
+# Execution helpers
+# ----------------------------------------------------------------------------
 
 run_aider() {
     local attempt=0
@@ -252,11 +325,9 @@ run_aider() {
 
     if is_truthy "$AIDER_TRACE"; then
         mkdir -p "$AIDER_TRACE_DIR"
-        local trace_stamp
-        trace_stamp="issue-${ISSUE_NUMBER}-$(date '+%Y%m%d-%H%M%S')"
-        aider_log_file="$AIDER_TRACE_DIR/aider-${trace_stamp}.log"
-        aider_prompt_file="$AIDER_TRACE_DIR/aider-${trace_stamp}.prompt.md"
-        cp PLAN.md "$aider_prompt_file"
+        aider_log_file="$AIDER_TRACE_DIR/${RUN_ID}.aider.log"
+        aider_prompt_file="$AIDER_TRACE_DIR/${RUN_ID}.aider.prompt.md"
+        cp "$PLAN_FILE" "$aider_prompt_file"
         log "Aider trace enabled"
         log "Aider prompt: $aider_prompt_file"
         log "Aider output: $aider_log_file"
@@ -272,7 +343,7 @@ run_aider() {
             --yes
             --no-pretty
             --model "$AIDER_MODEL"
-            --message "$(cat PLAN.md)"
+            --message "$(cat "$PLAN_FILE")"
         )
 
         if [[ "$AIDER_ARCHITECT" == "1" || "$AIDER_ARCHITECT" == "true" ]]; then
@@ -300,7 +371,7 @@ run_aider() {
 
 run_task_e2e() {
     export PIPELINE_PROMPT
-    PIPELINE_PROMPT="$(cat PLAN.md)"
+    PIPELINE_PROMPT="$(cat "$PLAN_FILE")"
 
     if [ -n "$E2E_RUNNER_CMD" ]; then
         log "Running task-e2e via custom E2E_RUNNER_CMD..."
@@ -338,7 +409,7 @@ run_tests() {
     log "Running tests..."
     if [ -f package.json ]; then
         TEST_STATUS="npm"
-        if npm test --if-present 2>&1 | tee test_output.txt; then
+        if npm test --if-present 2>&1 | tee "$TEST_OUTPUT_FILE"; then
             TEST_PASSED=true
             log "npm tests passed"
         else
@@ -346,7 +417,7 @@ run_tests() {
         fi
     elif [ -f pytest.ini ] || [ -d tests ] || find . -maxdepth 2 \( -name 'test_*.py' -o -name '*_test.py' \) | grep -q .; then
         TEST_STATUS="pytest"
-        if pytest 2>&1 | tee test_output.txt; then
+        if pytest 2>&1 | tee "$TEST_OUTPUT_FILE"; then
             TEST_PASSED=true
             log "pytest passed"
         else
@@ -354,7 +425,7 @@ run_tests() {
         fi
     elif grep -q '^test:' Makefile 2>/dev/null; then
         TEST_STATUS="make test"
-        if make test 2>&1 | tee test_output.txt; then
+        if make test 2>&1 | tee "$TEST_OUTPUT_FILE"; then
             TEST_PASSED=true
             log "make test passed"
         else
@@ -366,56 +437,95 @@ run_tests() {
     fi
 }
 
-prepare_repo
-log "Tool mode: $TOOL_MODE"
+# ----------------------------------------------------------------------------
+# Main workflow
+# ----------------------------------------------------------------------------
 
-if [ -d "$VENV_DIR" ]; then
-    source "$VENV_DIR/bin/activate"
-fi
+setup_run_state() {
+    if [ -z "$PIPELINE_STATE_DIR" ]; then
+        PIPELINE_STATE_DIR="$REPO_PATH/$PIPELINE_REPO_STATE_SUBDIR"
+    fi
 
-if [[ "$PLAN_MODEL_PROVIDER" == "ollama" || "$PLAN_MODEL_PROVIDER" == "auto" || "$AIDER_MODEL" == ollama/* ]]; then
-    prepare_ollama_models
-fi
+    if [ -z "$AIDER_TRACE_DIR" ]; then
+        AIDER_TRACE_DIR="$PIPELINE_STATE_DIR"
+    fi
 
-generate_plan
+    mkdir -p "$PIPELINE_STATE_DIR"
+    RUN_ID="issue-${ISSUE_NUMBER}-$(date '+%Y%m%d-%H%M%S')"
+    ISSUE_STATE_DIR="$PIPELINE_STATE_DIR/issue-${ISSUE_NUMBER}"
+    mkdir -p "$ISSUE_STATE_DIR"
+    PLAN_FILE="$ISSUE_STATE_DIR/${RUN_ID}.plan.md"
+    TEST_OUTPUT_FILE="$ISSUE_STATE_DIR/${RUN_ID}.test_output.txt"
 
-SUCCESS=false
-if run_selected_tool; then
-    SUCCESS=true
-else
-    log "Selected tool failed"
-fi
+    if [[ "$PIPELINE_STATE_DIR" == "$REPO_PATH"/* ]]; then
+        local local_state_rel="${PIPELINE_STATE_DIR#"$REPO_PATH"/}"
+        ensure_local_git_exclude "$local_state_rel/"
+    fi
 
-TEST_PASSED=false
-TEST_STATUS="not-run"
-if [ "$SUCCESS" = true ]; then
-    run_tests
-fi
+    log "Run state dir: $PIPELINE_STATE_DIR"
+    log "Issue state dir: $ISSUE_STATE_DIR"
+    log "Plan file: $PLAN_FILE"
+    log "Test output file: $TEST_OUTPUT_FILE"
+}
 
-git add -A
-git commit -m "feat: implement issue #$ISSUE_NUMBER - $ISSUE_TITLE" || true
-git push origin "$BRANCH"
+activate_runtime() {
+    if [ -d "$VENV_DIR" ]; then
+        # shellcheck disable=SC1090
+        source "$VENV_DIR/bin/activate"
+    fi
 
-CREATE_PR=true
-if [ "$PIPELINE_BRANCH_MODE" = "direct-target" ]; then
-    CREATE_PR=false
-fi
+    if [[ "$PLAN_MODEL_PROVIDER" == "ollama" || "$PLAN_MODEL_PROVIDER" == "auto" || "$AIDER_MODEL" == ollama/* ]]; then
+        prepare_ollama_models
+    fi
+}
 
-if [ "$SKIP_PR_CREATE" = "true" ]; then
-    CREATE_PR=false
-elif [ "$SKIP_PR_CREATE" = "false" ]; then
+execute_pipeline_run() {
+    SUCCESS=false
+    TEST_PASSED=false
+    TEST_STATUS="not-run"
+
+    generate_plan
+
+    if run_selected_tool; then
+        SUCCESS=true
+    else
+        log "Selected tool failed"
+    fi
+
+    if [ "$SUCCESS" = true ]; then
+        run_tests
+    fi
+}
+
+commit_and_push_changes() {
+    git add -A
+    git commit -m "feat: implement issue #$ISSUE_NUMBER - $ISSUE_TITLE" || true
+    git push origin "$BRANCH"
+}
+
+determine_pr_mode() {
     CREATE_PR=true
-fi
 
-# A PR cannot be created when branch and base are the same.
-if [ "$BRANCH" = "$BASE_BRANCH" ]; then
-    CREATE_PR=false
-fi
+    if [ "$PIPELINE_BRANCH_MODE" = "direct-target" ]; then
+        CREATE_PR=false
+    fi
 
-if [ "$TEST_PASSED" = true ]; then
-    PR_TITLE="feat: $ISSUE_TITLE"
-    PR_LABEL="ready-for-review"
-    PR_BODY="Closes #$ISSUE_NUMBER
+    if [ "$SKIP_PR_CREATE" = "true" ]; then
+        CREATE_PR=false
+    elif [ "$SKIP_PR_CREATE" = "false" ]; then
+        CREATE_PR=true
+    fi
+
+    if [ "$BRANCH" = "$BASE_BRANCH" ]; then
+        CREATE_PR=false
+    fi
+}
+
+build_pr_metadata() {
+    if [ "$TEST_PASSED" = true ]; then
+        PR_TITLE="feat: $ISSUE_TITLE"
+        PR_LABEL="ready-for-review"
+        PR_BODY="Closes #$ISSUE_NUMBER
 
 ## Route
 
@@ -423,15 +533,15 @@ $TOOL_MODE
 
 ## What was done
 
-$(cat PLAN.md)
+$(cat "$PLAN_FILE")
 
 ## Tests
 
 Automated checks passed via $TEST_STATUS."
-else
-    PR_TITLE="wip: $ISSUE_TITLE [needs review]"
-    PR_LABEL="needs-human-review"
-    PR_BODY="Closes #$ISSUE_NUMBER
+    else
+        PR_TITLE="wip: $ISSUE_TITLE [needs review]"
+        PR_LABEL="needs-human-review"
+        PR_BODY="Closes #$ISSUE_NUMBER
 
 ## Route
 
@@ -443,25 +553,43 @@ Pipeline completed but validation status is: $TEST_STATUS.
 
 ## Plan
 
-$(cat PLAN.md)
+$(cat "$PLAN_FILE")
 
 ## Test output
 
 \`\`\`
-$(cat test_output.txt 2>/dev/null || echo 'no output')
+$(cat "$TEST_OUTPUT_FILE" 2>/dev/null || echo 'no output')
 \`\`\`"
-fi
+    fi
+}
 
-if [ "$CREATE_PR" = true ]; then
-    gh pr create \
-        --title "$PR_TITLE" \
-        --body "$PR_BODY" \
-        --base "$BASE_BRANCH" \
-        --head "$BRANCH" || log "PR already exists or creation failed"
+publish_results() {
+    if [ "$CREATE_PR" = true ]; then
+        gh pr create \
+            --title "$PR_TITLE" \
+            --body "$PR_BODY" \
+            --base "$BASE_BRANCH" \
+            --head "$BRANCH" || log "PR already exists or creation failed"
 
-    gh pr edit "$BRANCH" --add-label "$PR_LABEL" >/dev/null 2>&1 || log "Label '$PR_LABEL' could not be added"
-    log "Done - PR opened for issue #$ISSUE_NUMBER"
-else
-    gh issue edit "$ISSUE_NUMBER" --repo "$GITHUB_REPO" --add-label "$PR_LABEL" >/dev/null 2>&1 || log "Issue label '$PR_LABEL' could not be added"
-    log "Done - committed directly to $BRANCH for issue #$ISSUE_NUMBER (PR skipped)"
-fi
+        gh pr edit "$BRANCH" --add-label "$PR_LABEL" >/dev/null 2>&1 || log "Label '$PR_LABEL' could not be added"
+        log "Done - PR opened for issue #$ISSUE_NUMBER"
+    else
+        gh issue edit "$ISSUE_NUMBER" --repo "$GITHUB_REPO" --add-label "$PR_LABEL" >/dev/null 2>&1 || log "Issue label '$PR_LABEL' could not be added"
+        log "Done - committed directly to $BRANCH for issue #$ISSUE_NUMBER (PR skipped)"
+    fi
+}
+
+main() {
+    prepare_repo
+    log "Tool mode: $TOOL_MODE"
+
+    setup_run_state
+    activate_runtime
+    execute_pipeline_run
+    commit_and_push_changes
+    determine_pr_mode
+    build_pr_metadata
+    publish_results
+}
+
+main

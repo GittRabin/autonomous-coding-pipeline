@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^bash -n pipeline/run_pipeline\\.sh && grep -nE \"PIPELINE_STATE_DIR\\|PIPELINE_REPO_STATE_SUBDIR\\|ISSUE_STATE_DIR\\|ensure_local_git_exclude\\|AIDER_TRACE_DIR\" pipeline/run_pipeline\\.sh \\.env\\.example README\\.md$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

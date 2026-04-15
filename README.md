@@ -72,11 +72,11 @@ Use [.env.example](.env.example) only if you want to pre-seed defaults. In norma
 
 ### Common optional values
 
-- `OLLAMA_MODEL` — defaults to `qwen2.5-coder:1.5b`
+- `OLLAMA_MODEL` — defaults to `deepseek-coder-v2:16b-lite-instruct-q4_K_M`
 - `OLLAMA_AUTO_PULL` — `true` by default, auto-download missing configured Ollama models
-- `OLLAMA_FALLBACK_MODEL` — model used automatically if configured model cannot be prepared (default `qwen2.5-coder:1.5b`)
+- `OLLAMA_FALLBACK_MODEL` — model used automatically if configured model cannot be prepared (default `deepseek-coder-v2:16b-lite-instruct-q4_K_M`)
 - `WORK_DIR` — install location on the VM
-- `REPO_DIR` — where target repositories are cloned
+- `REPO_DIR` — where target repositories are cloned, default `$HOME/projects`
 - `REPO_PATH_OVERRIDE` — optional explicit local checkout path for a repo profile
 - `VENV_DIR` — Python virtual environment path
 - `POLL_INTERVAL_MINUTES` — timer frequency, default `5`
@@ -86,10 +86,12 @@ Use [.env.example](.env.example) only if you want to pre-seed defaults. In norma
 - `AIDER_EDITOR_MODEL` — optional separate editor model for Aider
 - `AIDER_ARCHITECT` — set `1` to enable Aider architect mode
 - `AIDER_TRACE` — `true` by default; stores per-run prompt and streamed output logs
-- `AIDER_TRACE_DIR` — directory for Aider trace files (default `$HOME/.local/state/rabin`)
+- `AIDER_TRACE_DIR` — leave empty to store trace files in the repo history folder; set explicit path to override
 - `OLLAMA_API_BASE` — defaults to `http://127.0.0.1:11434` for local Ollama access
 - `GIT_COMMIT_NAME` — git author name used by pipeline when repo identity is unset
 - `GIT_COMMIT_EMAIL` — git author email used by pipeline when repo identity is unset
+- `PIPELINE_STATE_DIR` — leave empty to keep run artifacts under each repo (`<repo>/.rabin/history`)
+- `PIPELINE_REPO_STATE_SUBDIR` — repo-local subdirectory used when `PIPELINE_STATE_DIR` is empty
 - Installer links `aider` to `~/.local/bin/aider` for direct shell use
 - `TARGET_BRANCH` — optional base branch to work against
 - `PIPELINE_BRANCH_MODE` — `issue-branch` (default) or `direct-target`
@@ -135,7 +137,9 @@ Example uses include Claude Code, browser automation, Playwright flows, or MCP-b
 
    gh auth login
 
-4. In each target repository directory, run:
+4. For the normal single-repo path, the installer now auto-enables the default profile when it can detect your repo and GitHub auth.
+
+   For multi-project or custom setup, run:
 
    rabin configure
 
@@ -239,6 +243,8 @@ Use:
 
 - `rabin status project-a`
 - `rabin logs project-a`
+
+If you only configured one project, omitting the profile now targets that saved profile automatically. When using `systemctl` directly, replace `default` with the profile name shown by `rabin profiles`.
 
 ## Operational commands
 
