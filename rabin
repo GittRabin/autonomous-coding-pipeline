@@ -66,7 +66,7 @@ Options:
     --work-dir <path>           Install location (default: $HOME/pipeline)
     --repo-dir <path>           Clone base dir (default: $HOME/projects)
     --venv-dir <path>           Python venv path (default: $HOME/.venv/pipeline)
-    --ollama-model <name>       Local editor model (default: deepseek-coder-v2:16b-lite-instruct-q4_K_M)
+    --ollama-model <name>       Local editor model (default: qwen2.5-coder:7b)
     --ollama-planner-model <name>  Local planner model (default: ollama-model)
     --plan-model-provider <name>    Plan backend: auto|ollama|anthropic|claude
     --aider-model <name>        Aider model (default: ollama/<ollama-model>)
@@ -164,10 +164,10 @@ bootstrap_default_profile_from_env() {
 ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
 GITHUB_TOKEN=$token
 GITHUB_REPO=$repo
-OLLAMA_MODEL=${OLLAMA_MODEL:-deepseek-coder-v2:16b-lite-instruct-q4_K_M}
-OLLAMA_PLANNER_MODEL=${OLLAMA_PLANNER_MODEL:-${OLLAMA_MODEL:-deepseek-coder-v2:16b-lite-instruct-q4_K_M}}
+OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:7b}
+OLLAMA_PLANNER_MODEL=${OLLAMA_PLANNER_MODEL:-${OLLAMA_MODEL:-qwen2.5-coder:7b}}
 PLAN_MODEL_PROVIDER=${PLAN_MODEL_PROVIDER:-auto}
-AIDER_MODEL=${AIDER_MODEL:-ollama/${OLLAMA_MODEL:-deepseek-coder-v2:16b-lite-instruct-q4_K_M}}
+AIDER_MODEL=${AIDER_MODEL:-ollama/${OLLAMA_MODEL:-qwen2.5-coder:7b}}
 AIDER_EDITOR_MODEL=${AIDER_EDITOR_MODEL:-}
 AIDER_ARCHITECT=${AIDER_ARCHITECT:-0}
 AIDER_TRACE=${AIDER_TRACE:-false}
@@ -306,7 +306,7 @@ ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
 GITHUB_TOKEN=${GITHUB_TOKEN:-}
 GITHUB_REPO=${GITHUB_REPO:-}
 REPO_DIR=${REPO_DIR:-$HOME/projects}
-OLLAMA_MODEL=${OLLAMA_MODEL:-deepseek-coder-v2:16b-lite-instruct-q4_K_M}
+OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:7b}
 OLLAMA_PLANNER_MODEL=${OLLAMA_PLANNER_MODEL:-$OLLAMA_MODEL}
 PLAN_MODEL_PROVIDER=${PLAN_MODEL_PROVIDER:-auto}
 AIDER_MODEL=${AIDER_MODEL:-ollama/$OLLAMA_MODEL}
@@ -449,7 +449,7 @@ cmd_configure() {
     local work_dir="${WORK_DIR:-$HOME/pipeline}"
     local repo_dir="${REPO_DIR:-$HOME/projects}"
     local venv_dir="${VENV_DIR:-$HOME/.venv/pipeline}"
-    local ollama_model="${OLLAMA_MODEL:-deepseek-coder-v2:16b-lite-instruct-q4_K_M}"
+    local ollama_model="${OLLAMA_MODEL:-qwen2.5-coder:7b}"
     local ollama_planner_model="${OLLAMA_PLANNER_MODEL:-$ollama_model}"
     local plan_model_provider="${PLAN_MODEL_PROVIDER:-auto}"
     local aider_model="${AIDER_MODEL:-ollama/$ollama_model}"

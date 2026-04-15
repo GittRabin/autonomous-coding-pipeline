@@ -75,8 +75,8 @@ grep -q "^REPO_DIR=$TMP_DIR/home/projects$" "$TMP_DIR/config/default.env" || {
     exit 1
 }
 
-grep -q '^OLLAMA_MODEL=deepseek-coder-v2:16b-lite-instruct-q4_K_M$' "$TMP_DIR/config/default.env" || {
-    echo "Expected the default Ollama model to use DeepSeek Coder V2 16B Lite Instruct." >&2
+grep -q '^OLLAMA_MODEL=qwen2.5-coder:7b$' "$TMP_DIR/config/default.env" || {
+    echo "Expected the default Ollama model to use Qwen 2.5 Coder 7B." >&2
     exit 1
 }
 

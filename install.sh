@@ -35,7 +35,7 @@ if [ ! -d "$SCRIPT_DIR/poller" ] || [ ! -d "$SCRIPT_DIR/pipeline" ] || [ ! -d "$
     [ -n "$SOURCE_DIR" ] || fail "Failed to download installer source for ${INSTALL_REPO}@${INSTALL_REF}"
 fi
 
-OLLAMA_MODEL="${OLLAMA_MODEL:-deepseek-coder-v2:16b-lite-instruct-q4_K_M}"
+OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5-coder:7b}"
 WORK_DIR="${WORK_DIR:-$HOME/pipeline}"
 REPO_DIR="${REPO_DIR:-$HOME/projects}"
 VENV_DIR="${VENV_DIR:-$HOME/.venv/pipeline}"

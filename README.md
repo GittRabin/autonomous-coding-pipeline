@@ -73,9 +73,9 @@ Use [.env.example](.env.example) only if you want to pre-seed defaults. In norma
 
 ### Common optional values
 
-- `OLLAMA_MODEL` — defaults to `deepseek-coder-v2:16b-lite-instruct-q4_K_M`
+- `OLLAMA_MODEL` — defaults to `qwen2.5-coder:7b`
 - `OLLAMA_AUTO_PULL` — `true` by default, auto-download missing configured Ollama models
-- `OLLAMA_FALLBACK_MODEL` — model used automatically if configured model cannot be prepared (default `deepseek-coder-v2:16b-lite-instruct-q4_K_M`)
+- `OLLAMA_FALLBACK_MODEL` — model used automatically if configured model cannot be prepared (default `qwen2.5-coder:7b`)
 - `WORK_DIR` — install location on the VM
 - `REPO_DIR` — where target repositories are cloned, default `$HOME/projects`
 - `REPO_PATH_OVERRIDE` — optional explicit local checkout path for a repo profile
